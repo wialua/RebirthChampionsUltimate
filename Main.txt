@@ -5486,56 +5486,7 @@ end)
     Window:SelectTab(1)
     SaveManager:LoadAutoloadConfig()
 
-    local usercountsection = Tabs.Settings:AddSection("User Count")
-
-    local userCountParagraph = Tabs.Settings:AddParagraph("UserCountStatus", {
-        Title = "Script User Count",
-        Content = "Loading..."
-    })
-
-
-    -- Step 1: Register the user
-    local registerResponse = requestFunc({
-        Url = "https://duckyscripts.pythonanywhere.com/api/rcu/add-user",
-        Method = "POST",
-        Headers = {
-            ["Content-Type"] = "application/json"
-        },
-        Body = HttpService:JSONEncode({
-            username = username,
-            userid = userid
-        })
-    })
-
-    if registerResponse and registerResponse.Body then
-    end
-
-
-    task.spawn(function()
-        while true do
-            local heartbeatResponse = requestFunc({
-                Url = "https://duckyscripts.pythonanywhere.com/api/rcu/active",
-                Method = "POST",
-                Headers = {
-                    ["Content-Type"] = "application/json"
-                },
-                Body = HttpService:JSONEncode({
-                    userid = userid,
-                    active = true
-                })
-            })
-
-            if heartbeatResponse and heartbeatResponse.Body then
-                local responseBody = heartbeatResponse.Body
-                local data = HttpService:JSONDecode(responseBody)
-                local activeCount = data.active_count or 0
-                local totalCount = data.count or 0
-                userCountParagraph:SetValue(tostring ("Total users: " .. tostring(totalCount) .. "\n" .. "Active Users: " .. tostring(activeCount)))
-            end
-
-            task.wait(30) 
-        end
-    end)
+    
 
 end
 
