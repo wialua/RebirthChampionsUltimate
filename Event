@@ -1434,7 +1434,7 @@ task.spawn(function()
     -- Now that services are ready, build the UI
     Window = Library:Window{
         Title = "RCU - Halloween",
-        SubTitle = "By Duckie",
+        SubTitle = "By Wia",
         TabWidth = 160,
         Size =  UDim2.fromOffset(580, 460),
         Resize = false,
