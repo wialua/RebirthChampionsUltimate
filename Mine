@@ -1,0 +1,2333 @@
+local Library = loadstring(game:HttpGetAsync("https://github.com/ActualMasterOogway/Fluent-Renewed/releases/latest/download/Fluent.luau"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/bigbeanscripts/Pet-Warriors/refs/heads/main/test"))()
+local InterfaceManager = loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/InterfaceManager.luau"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/SenhorLDS/ProjectLDSHUB/refs/heads/main/Anti%20AFK"))()
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
+local LocalPlayer = Players.LocalPlayer
+
+local Knit
+local ClickService, EggService, RebirthService, TreeService, AxeService, InventoryService,
+      PetService, RewardService, UpgradeService, SeasonService, AuraService, EventService,
+      OrbService, FarmService, BuildingService, ClanService, LumberjackService
+local DataController, EggController, TreeController, HatchingController, AuraController,
+      MapController, OrbController, ItemController, SoundController, FarmController, BuildingController
+
+local Functions, Util, Values, seasonVariables, seasonUtils, seasonTiersList
+
+local Window, Tabs, EggDropdown, HatchAmount, LuckyEgg, AutoHatch, HideAnimationToggle,
+      SelectTreesDropdown, AutoCutTreesToggle, lowercooldown, BypassStrength, AutoEquip, UpgradeAxe,
+      explorerroom, ActivateLeversSection, ClaimSection, AncientWheel, ClanWheel, AncientMerchantSection, PassSection, Aura, EventSection
+
+local selectedEgg, selectedAmount, useLuckyEggs, selectedTrees, autoBreakRunning, isAutoEquipAxeEnabled,
+      isAutoUpgradeEnabled, originalSelectedObjects, originalAutoCutState, treeToggleThread, petDisplayToId,
+      angelQuestToggle, allowedDiceDropdown, originalEggSelection, originalHatchAmount, originalTreeSelection,
+      originalAutoCutState, originalAutoHatchState, angelQuestEnabled, isAutoCollectEnabled, autoClaimThread, pickupStarsThread,
+      autoClaimAllChestsThread, originalIsInGroup, supplyDropThread, isAutoSpinEnabled, isAutoSpinEnabled1, isAutoBuyEnabled,
+      autoSteampunkToggles, isAutoCraftEnabled, originalAutoCraftSettings, autoCraftDropdown, autoCraftBuildingMap,
+      ResourceStatusParagraph, selectedDiceItems, autoRollThread, isAuraHidden, originalAuraFuncs, isAutoBreakingMeteors
+
+local BuildUI, getUnlockedRebirthOptions, GetBestRebirthOption, updateRebirthDropdown, performRebirth,
+      TerminateThread, CreateThread, formatNumber, getLuckyIdForEggName, getTreeTypes, mapWoodToTreeWorld,
+      getLumberId, getActiveTreesInGroup, updateAxeUpgradeStatus, manageTreeToggleCycle, getAllNonWoodRequirements,
+      getAllFarms, getAllFarmsWithOptions, getAllFarmsForClaim, isFarmReady, getPlayerPetOptions,
+      updatePetStatusParagraph, updateAngelQuestStatus, getAllAuraDice, getCurrentQuestType, findBestPotion,
+      getAvailableAuraDice, setupForQuestType, storeOriginalSettings, restoreOriginalSettings, getAllSmoothies,
+      getAllMagicPotItems, getAllWoods, canCraftToday, getAllMaps, getAllLumberjackItems, canAffordUpgrade,
+      isLumberjackAtWork, getAllUpgradeItems, hasActiveBoost, getUnbuiltBuildings, canAffordBuilding,
+      getPrerequisiteChain, getMissingResources, updateResourceStatus, mapWoodToTreeWorldForCraft, claimChestsInUnlockedMaps,
+      createClaimToggle, getAllAncientMerchantItems, updateDiceStatus, storeAuraFuncs, hideAuraAnims, restoreAuraAnims
+
+spawn(function()
+    while wait(30) do 
+        pcall(function() collectgarbage("collect") end)
+        gcinfo()
+    end
+end)
+
+BuildUI = function()
+
+    local AutoMineSection = Tabs.Mine:AddSection("Auto Mine")
+
+    local okOres, Ores = pcall(function() return require(ReplicatedStorage.Shared.List.Mine.Ores) end)
+    local okAfk, AfkOres = pcall(function() return require(ReplicatedStorage.Shared.List.Mine.AfkOres) end)
+
+    if not okOres or type(Ores) ~= "table" then
+        Ores = {}
+    end
+    if not okAfk or type(AfkOres) ~= "table" then
+        AfkOres = {}
+    end
+
+    local function formatName(rawName)
+        local spaced = rawName:gsub("(%l)(%u)", "%1 %2")
+        local formatted = spaced:gsub("(%a)([%w_']*)", function(first, rest)
+            return first:upper() .. rest:lower()
+        end)
+        return formatted
+    end
+
+    local entries = {}
+    for rawName in pairs(Ores) do
+        table.insert(entries, { raw = rawName, formatted = formatName(rawName), isAfk = false })
+    end
+    for rawName in pairs(AfkOres) do
+        table.insert(entries, { raw = rawName, formatted = "[AFK] " .. formatName(rawName), isAfk = true })
+    end
+    table.sort(entries, function(a, b) return a.formatted < b.formatted end)
+
+    local values = {}
+    local formattedToRaw = {}
+    local rawToFormatted = {}
+    local afkLookup = {}
+    for i, e in ipairs(entries) do
+        values[i] = e.formatted
+        formattedToRaw[e.formatted] = e.raw
+        rawToFormatted[e.raw] = e.formatted
+        afkLookup[e.formatted] = e.isAfk
+    end
+
+    local selectedOres = {}
+
+    local function normalizeSelection(selection)
+        local result = {}
+        local seen = {}
+        if type(selection) == "table" then
+            for k, v in pairs(selection) do
+                if type(k) == "number" and type(v) == "string" then
+                    if not seen[v] then seen[v] = true; table.insert(result, v) end
+                elseif type(k) == "string" and (v == true or v == 1) then
+                    if not seen[k] then seen[k] = true; table.insert(result, k) end
+                end
+            end
+        elseif type(selection) == "string" then
+            if not seen[selection] then seen[selection] = true; table.insert(result, selection) end
+        end
+        return result
+    end
+
+    local SelectOres = AutoMineSection:Dropdown("SelectOres", {
+        Title = "Select Ores",
+        Description = "Choose which ore(s) to target. Searchable + multi-select.",
+        Default = {},
+        Values = values,
+        Multi = true,
+        Searchable = true,
+        Callback = function(selection)
+            selectedOres = normalizeSelection(selection)
+            if #selectedOres == 0 then
+            end
+        end
+    })
+
+
+    local function GetSelectedOres()
+        return selectedOres
+    end
+
+    local AutoBreakThread
+    local AutoBreakMonitorThread
+    local AutoBreakEnabled = false
+    local lastSuccessfulBreak = tick()
+
+    local AutoMine = AutoMineSection:Toggle("AutoBreakSelected", {
+        Title = "Auto Break (Selected)",
+        Description = "Break selected ores.",
+        Default = false,
+        Callback = function(state)
+            AutoBreakEnabled = state
+            
+            -- Always cancel existing threads first
+            if AutoBreakThread then
+                task.cancel(AutoBreakThread)
+                AutoBreakThread = nil
+            end
+            if AutoBreakMonitorThread then
+                task.cancel(AutoBreakMonitorThread)
+                AutoBreakMonitorThread = nil
+            end
+            
+            task.wait(0.2)
+            
+            if AutoBreakEnabled then
+                lastSuccessfulBreak = tick()
+                
+                -- Check if we're in Space Mine
+                local roomFolder = workspace.Game.Maps.Void["Space Mine"].Rooms:FindFirstChild("[1] Room")
+                local inSpaceMine = roomFolder and roomFolder:FindFirstChild("OreRoomSpawn")
+                
+                -- Only teleport to Space Mine if not already there
+                if not inSpaceMine then
+                    local Maps = require(ReplicatedStorage.Shared.List.Maps)
+                    local targetMachine = "Space Mine"
+                    local found = false
+
+                    for mapId, mapData in pairs(Maps) do
+                        if mapData.machines then
+                            for _, machine in pairs(mapData.machines) do
+                                if machine.name == targetMachine and machine.teleport then
+                                    
+                                    local canTeleport = true
+                                    if machine.canTeleport then
+                                        local playerData = DataController:getData()
+                                        canTeleport = machine.canTeleport(playerData)
+                                    end
+                                    
+                                    if canTeleport then
+                                        local character = LocalPlayer.Character
+                                        if character and character:FindFirstChild("HumanoidRootPart") then
+                                            LocalPlayer:RequestStreamAroundAsync(machine.teleport.p, 5)
+                                            task.wait(0.5)
+                                            character.HumanoidRootPart:PivotTo(machine.teleport)
+                                            task.wait(1)
+                                            character.HumanoidRootPart:PivotTo(machine.teleport)
+                                            lastSuccessfulBreak = tick()
+                                            task.wait(3) -- Wait 3 seconds after teleporting to Space Mine
+                                        end
+                                    end
+                                    
+                                    found = true
+                                    break
+                                end
+                            end
+                            
+                            if found then break end
+                        end
+                    end
+                end
+                
+                -- Monitor thread that checks every 3 seconds
+                AutoBreakMonitorThread = task.spawn(function()
+                    local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                    local OreService = Knit.GetService("OreService")
+                    local Players = game:GetService("Players")
+                    local Ores = require(game:GetService("ReplicatedStorage").Shared.List.Mine.Ores)
+                    local OreRooms = require(game:GetService("ReplicatedStorage").Shared.List.Mine.OreRooms)
+                    local ExclusiveItems = require(game:GetService("ReplicatedStorage").Shared.List.Items.Exclusive)
+                    
+                    local function getPickaxeDamage()
+                        local data = DataController:getData()
+                        if data and data.inventory and data.inventory.exclusive then
+                            for _, itemData in pairs(data.inventory.exclusive) do
+                                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                local itemName = itemObj:getName()
+                                
+                                if itemName:lower():find("pickaxe") then
+                                    local pickaxeData = ExclusiveItems[itemName]
+                                    if pickaxeData and pickaxeData.multiplier then
+                                        local baseDamage = pickaxeData.multiplier
+                                        local playerMultiplier = data.pickaxeDamageMultiplier or 0
+                                        local totalDamage = baseDamage + playerMultiplier
+                                        return totalDamage
+                                    end
+                                end
+                            end
+                        end
+                        return 10
+                    end
+                    
+                    local function findBestRoomForOres(selectedOreIds, pickaxeDamage)
+                        local bestRoom = nil
+                        local bestScore = 0
+                        local bestBeatablePercent = 0
+                        local fallbackRoom = nil
+                        local fallbackScore = 0
+                        
+                        for roomName, roomData in pairs(OreRooms) do
+                            if roomData.ores then
+                                local totalSelectedChance = 0
+                                for _, oreId in ipairs(selectedOreIds) do
+                                    if roomData.ores[oreId] then
+                                        totalSelectedChance = totalSelectedChance + roomData.ores[oreId]
+                                    end
+                                end
+                                
+                                if totalSelectedChance > 0 then
+                                    local totalChance = 0
+                                    local beatableChance = 0
+                                    
+                                    for roomOreId, chance in pairs(roomData.ores) do
+                                        totalChance = totalChance + chance
+                                        
+                                        local roomOreData = Ores[roomOreId]
+                                        if roomOreData and roomOreData.hp then
+                                            local hitsNeeded = math.ceil(roomOreData.hp / pickaxeDamage)
+                                            if hitsNeeded <= 75 then
+                                                beatableChance = beatableChance + chance
+                                            end
+                                        end
+                                    end
+                                    
+                                    local beatablePercent = (beatableChance / totalChance) * 100
+                                    
+                                    if totalSelectedChance > fallbackScore then
+                                        fallbackScore = totalSelectedChance
+                                        fallbackRoom = roomName
+                                    end
+                                    
+                                    if beatablePercent > 25 then
+                                        if totalSelectedChance > bestScore then
+                                            bestScore = totalSelectedChance
+                                            bestRoom = roomName
+                                            bestBeatablePercent = beatablePercent
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        
+                        if bestRoom then
+                            return bestRoom, bestScore, bestBeatablePercent, false
+                        elseif fallbackRoom then
+                            return fallbackRoom, fallbackScore, 0, true
+                        end
+                        
+                        return nil, 0, 0, false
+                    end
+                    
+                    while AutoBreakEnabled do
+                        task.wait(3)
+                        
+                        if not AutoBreakEnabled then
+                            break
+                        end
+                        
+                        local timeSinceLastBreak = tick() - lastSuccessfulBreak
+                        
+                        if timeSinceLastBreak > 5 then
+                            local character = Players.LocalPlayer.Character
+                            local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                            
+                            if hrp then
+                                local selectedNames = GetSelectedOres and GetSelectedOres() or {}
+                                local selectedOreIds = {}
+                                
+                                for _, formattedName in ipairs(selectedNames) do
+                                    if not formattedName:find("%[AFK%]") then
+                                        local oreId = formattedToRaw[formattedName]
+                                        if oreId then
+                                            table.insert(selectedOreIds, oreId)
+                                        end
+                                    end
+                                end
+                                
+                                if #selectedOreIds > 0 then
+                                    local pickaxeDamage = getPickaxeDamage()
+                                    local room, score, beatablePercent, isFallback = findBestRoomForOres(selectedOreIds, pickaxeDamage)
+                                    
+                                    if room then
+                                        local roomNumber = room:match("%d+")
+                                        local formattedRoomName = "[" .. roomNumber .. "] Room"
+                                        
+                                        local roomFolder = workspace.Game.Maps.Void["Space Mine"].Rooms:FindFirstChild(formattedRoomName)
+                                        
+                                        if roomFolder then
+                                            local hasOres = false
+                                            local data = DataController:getData()
+                                            if data and data.ores and data.ores[room] then
+                                                for _, _ in pairs(data.ores[room]) do
+                                                    hasOres = true
+                                                    break
+                                                end
+                                            end
+                                            
+                                            if hasOres then
+                                                local modelsFolder = roomFolder:FindFirstChild("Models")
+                                                if modelsFolder then
+                                                    local children = modelsFolder:GetChildren()
+                                                    local firstModel = children[1]
+                                                    if firstModel then
+                                                        hrp:PivotTo(firstModel:GetPivot())
+                                                        lastSuccessfulBreak = tick()
+                                                    end
+                                                end
+                                            else
+                                                local oreRoomSpawn = roomFolder:FindFirstChild("OreRoomSpawn")
+                                                if oreRoomSpawn then
+                                                    hrp:PivotTo(oreRoomSpawn.CFrame)
+                                                    lastSuccessfulBreak = tick()
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
+
+                -- Main breaking thread
+                AutoBreakThread = task.spawn(function()
+                    local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                    local OreService = Knit.GetService("OreService")
+                    local DataController = require(game:GetService("ReplicatedStorage").Packages.Knit).GetController("DataController")
+                    local Ores = require(game:GetService("ReplicatedStorage").Shared.List.Mine.Ores)
+                    local AfkOres = require(game:GetService("ReplicatedStorage").Shared.List.Mine.AfkOres)
+                    local OreRooms = require(game:GetService("ReplicatedStorage").Shared.List.Mine.OreRooms)
+                    local ExclusiveItems = require(game:GetService("ReplicatedStorage").Shared.List.Items.Exclusive)
+                    local CollectionService = game:GetService("CollectionService")
+                    local Players = game:GetService("Players")
+
+                    local function getPickaxeDamage()
+                        local data = DataController:getData()
+                        if data and data.inventory and data.inventory.exclusive then
+                            for _, itemData in pairs(data.inventory.exclusive) do
+                                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                local itemName = itemObj:getName()
+                                
+                                if itemName:lower():find("pickaxe") then
+                                    local pickaxeData = ExclusiveItems[itemName]
+                                    if pickaxeData and pickaxeData.multiplier then
+                                        local baseDamage = pickaxeData.multiplier
+                                        local playerMultiplier = data.pickaxeDamageMultiplier or 0
+                                        local totalDamage = baseDamage + playerMultiplier
+                                        return totalDamage, pickaxeData.name or itemName
+                                    end
+                                end
+                            end
+                        end
+                        return 10, "Wooden Pickaxe"
+                    end
+
+                    local function findBestRoomForOres(selectedOreIds, pickaxeDamage)
+                        local bestRoom = nil
+                        local bestScore = 0
+                        local bestBeatablePercent = 0
+                        local fallbackRoom = nil
+                        local fallbackScore = 0
+                        
+                        for roomName, roomData in pairs(OreRooms) do
+                            if roomData.ores then
+                                local totalSelectedChance = 0
+                                for _, oreId in ipairs(selectedOreIds) do
+                                    if roomData.ores[oreId] then
+                                        totalSelectedChance = totalSelectedChance + roomData.ores[oreId]
+                                    end
+                                end
+                                
+                                if totalSelectedChance > 0 then
+                                    local totalChance = 0
+                                    local beatableChance = 0
+                                    
+                                    for roomOreId, chance in pairs(roomData.ores) do
+                                        totalChance = totalChance + chance
+                                        
+                                        local roomOreData = Ores[roomOreId]
+                                        if roomOreData and roomOreData.hp then
+                                            local hitsNeeded = math.ceil(roomOreData.hp / pickaxeDamage)
+                                            if hitsNeeded <= 75 then
+                                                beatableChance = beatableChance + chance
+                                            end
+                                        end
+                                    end
+                                    
+                                    local beatablePercent = (beatableChance / totalChance) * 100
+                                    
+                                    if totalSelectedChance > fallbackScore then
+                                        fallbackScore = totalSelectedChance
+                                        fallbackRoom = roomName
+                                    end
+                                    
+                                    if beatablePercent > 25 then
+                                        if totalSelectedChance > bestScore then
+                                            bestScore = totalSelectedChance
+                                            bestRoom = roomName
+                                            bestBeatablePercent = beatablePercent
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        
+                        if bestRoom then
+                            return bestRoom, bestScore, bestBeatablePercent, false
+                        elseif fallbackRoom then
+                            return fallbackRoom, fallbackScore, 0, true
+                        end
+                        
+                        return nil, 0, 0, false
+                    end
+
+                    local pickaxeDamage, pickaxeName = getPickaxeDamage()
+
+                    local selectedNames = GetSelectedOres and GetSelectedOres() or {}
+                    local selectedOreIds = {}
+                    
+                    for _, formattedName in ipairs(selectedNames) do
+                        if not formattedName:find("%[AFK%]") then
+                            local oreId = formattedToRaw[formattedName]
+                            if oreId then
+                                table.insert(selectedOreIds, oreId)
+                            end
+                        end
+                    end
+                    
+                    local bestRoomToTeleport = nil
+                    if #selectedOreIds > 0 then
+                        local room, score, beatablePercent, isFallback = findBestRoomForOres(selectedOreIds, pickaxeDamage)
+                        if room then
+                            bestRoomToTeleport = room
+                        end
+                    end
+                    
+                    -- Teleport to the best room immediately
+                    if bestRoomToTeleport then
+                        local character = Players.LocalPlayer.Character
+                        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            local roomNumber = bestRoomToTeleport:match("%d+")
+                            local formattedRoomName = "[" .. roomNumber .. "] Room"
+                            local roomFolder = workspace.Game.Maps.Void["Space Mine"].Rooms:FindFirstChild(formattedRoomName)
+                            if roomFolder then
+                                local modelsFolder = roomFolder:FindFirstChild("Models")
+                                if modelsFolder then
+                                    local firstModel = modelsFolder:GetChildren()[1]
+                                    if firstModel then
+                                        hrp:PivotTo(firstModel:GetPivot())
+                                        task.wait(0.5)
+                                    end
+                                end
+                            end
+                        end
+                    end
+
+                    local currentTargetRoom = bestRoomToTeleport
+                    local lastRoomCheck = tick()
+
+                    while AutoBreakEnabled do
+                        if not AutoBreakEnabled then
+                            break
+                        end
+                        
+                        local data = DataController:getData()
+                        if not data then
+                            task.wait(1)
+                            continue
+                        end
+                        
+                        local selectedNames = GetSelectedOres and GetSelectedOres() or {}
+                        
+                        local selectedOreIds = {}
+                        for _, formattedName in ipairs(selectedNames) do
+                            if not formattedName:find("%[AFK%]") then
+                                local oreId = formattedToRaw[formattedName]
+                                if oreId then
+                                    table.insert(selectedOreIds, oreId)
+                                end
+                            end
+                        end
+                        
+                        if tick() - lastRoomCheck > 10 and #selectedOreIds > 0 then
+                            local room, score, beatablePercent, isFallback = findBestRoomForOres(selectedOreIds, pickaxeDamage)
+                            
+                            if room and room ~= currentTargetRoom then
+                                currentTargetRoom = room
+                                local character = Players.LocalPlayer.Character
+                                local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                                if hrp then
+                                    local roomNumber = room:match("%d+")
+                                    local formattedRoomName = "[" .. roomNumber .. "] Room"
+                                    local roomFolder = workspace.Game.Maps.Void["Space Mine"].Rooms:FindFirstChild(formattedRoomName)
+                                    if roomFolder then
+                                        local modelsFolder = roomFolder:FindFirstChild("Models")
+                                        if modelsFolder then
+                                            local firstModel = modelsFolder:GetChildren()[1]
+                                            if firstModel then
+                                                hrp:PivotTo(firstModel:GetPivot())
+                                                task.wait(0.5)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                            
+                            lastRoomCheck = tick()
+                        end
+
+                        local bestOre = nil
+                        local lowestHP = math.huge
+                        local foundSelectedOre = false
+
+                        for _, ore in CollectionService:GetTagged("Ore") do
+                            local roomId = ore:GetAttribute("roomId")
+                            local id = ore:GetAttribute("id")
+                            
+                            if roomId and id and data.ores and data.ores[roomId] and data.ores[roomId][id] then
+                                local info = data.ores[roomId][id]
+                                local formattedName = rawToFormatted[info.oreId]
+                                
+                                local isSelected = false
+                                for _, selectedName in ipairs(selectedNames) do
+                                    if selectedName == formattedName then
+                                        isSelected = true
+                                        break
+                                    end
+                                end
+                                
+                                if isSelected then
+                                    local oreData = Ores[info.oreId]
+                                    if oreData then
+                                        local remaining = oreData.hp - (info.damage or 0)
+                                        local hitsNeeded = math.ceil(remaining / pickaxeDamage)
+                                        
+                                        if remaining > 0 and hitsNeeded <= 75 and remaining < lowestHP then
+                                            lowestHP = remaining
+                                            bestOre = {
+                                                ore = ore,
+                                                type = "Ore",
+                                                roomId = roomId,
+                                                id = id,
+                                                oreId = info.oreId,
+                                                hp = remaining
+                                            }
+                                            foundSelectedOre = true
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        if not foundSelectedOre then
+                            for _, ore in CollectionService:GetTagged("AfkOre") do
+                                local oreId = ore:GetAttribute("ore")
+                                if oreId and AfkOres[oreId] then
+                                    local formattedName = "[AFK] " .. formatName(oreId)
+                                    
+                                    local isSelected = false
+                                    for _, selectedName in ipairs(selectedNames) do
+                                        if selectedName == formattedName then
+                                            isSelected = true
+                                            break
+                                        end
+                                    end
+                                    
+                                    if isSelected then
+                                        local info = data.afkOres and data.afkOres[oreId]
+                                        local oreData = AfkOres[oreId]
+                                        local remaining = oreData.hp - ((info and info.damage) or 0)
+                                        local hitsNeeded = math.ceil(remaining / pickaxeDamage)
+                                        
+                                        if remaining > 0 and hitsNeeded <= 75 and remaining < lowestHP then
+                                            lowestHP = remaining
+                                            bestOre = {
+                                                ore = ore,
+                                                type = "AfkOre",
+                                                oreId = oreId,
+                                                hp = remaining
+                                            }
+                                            foundSelectedOre = true
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        if not foundSelectedOre and currentTargetRoom then
+                            lowestHP = math.huge
+                            
+                            for _, ore in CollectionService:GetTagged("Ore") do
+                                local roomId = ore:GetAttribute("roomId")
+                                local id = ore:GetAttribute("id")
+                                
+                                if roomId == currentTargetRoom and id and data.ores and data.ores[roomId] and data.ores[roomId][id] then
+                                    local info = data.ores[roomId][id]
+                                    local oreData = Ores[info.oreId]
+                                    if oreData then
+                                        local remaining = oreData.hp - (info.damage or 0)
+                                        local hitsNeeded = math.ceil(remaining / pickaxeDamage)
+                                        
+                                        if remaining > 0 and hitsNeeded <= 75 and remaining < lowestHP then
+                                            lowestHP = remaining
+                                            bestOre = {
+                                                ore = ore,
+                                                type = "Ore",
+                                                roomId = roomId,
+                                                id = id,
+                                                oreId = info.oreId,
+                                                hp = remaining
+                                            }
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        if bestOre then
+                            local character = Players.LocalPlayer.Character
+                            local hrp = character and character:FindFirstChild("HumanoidRootPart")
+
+                            if bestOre.type == "Ore" then
+                                local oreInstance = bestOre.ore
+                                if oreInstance and oreInstance.Parent then
+                                    local orePart = oreInstance.PrimaryPart or oreInstance:FindFirstChildWhichIsA("BasePart")
+                                    if hrp and orePart then
+                                        hrp.CFrame = orePart.CFrame + Vector3.new(0, 3, 0)
+                                    end
+
+                                    pcall(function()
+                                        OreService.damage._re:FireServer(bestOre.roomId, bestOre.id)
+                                    end)
+                                    
+                                    lastSuccessfulBreak = tick()
+                                end
+
+                            elseif bestOre.type == "AfkOre" then
+                                local oreInstance = bestOre.ore
+                                if oreInstance and oreInstance.Parent then
+                                    local orePart = oreInstance.PrimaryPart or oreInstance:FindFirstChildWhichIsA("BasePart")
+                                    if hrp and orePart then
+                                        hrp.CFrame = orePart.CFrame + Vector3.new(0, 3, 0)
+                                    end
+
+                                    pcall(function()
+                                        OreService.damageAfk._re:FireServer(bestOre.oreId)
+                                    end)
+                                    
+                                    lastSuccessfulBreak = tick()
+                                end
+                            end
+                        end
+
+                        task.wait(0.5)
+                    end
+                end)
+            end
+        end
+    })
+
+    task.spawn(function()
+        while true do
+            if AutoBreakEnabled then
+                AutoMine:SetValue(false)
+                task.wait(0.5)
+                AutoMine:SetValue(true)
+                task.wait(0.5)
+                AutoMine:SetValue(true)
+            end
+            task.wait(20)
+        end
+    end)
+
+
+
+    local ForceStrongEnoughEnabled = false
+    local originalIsStrongEnough
+
+    AutoMineSection:Toggle("ForceStrongEnough", {
+        Title = "Strength Bypass",
+        Description = "Ignore Pickaxe strength requirements when breaking ores.",
+        Default = false,
+        Callback = function(state)
+            ForceStrongEnoughEnabled = state
+            local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit)
+            local OreController = Knit.GetController("OreController") 
+
+            if ForceStrongEnoughEnabled then
+                -- Save original function if not already saved
+                if not originalIsStrongEnough then
+                    originalIsStrongEnough = OreController.isStrongEnough
+                end
+
+                -- Override to always return true
+                OreController.isStrongEnough = function(_, _)
+                    return true
+                end
+            else
+                -- Restore original function
+                if originalIsStrongEnough then
+                    OreController.isStrongEnough = originalIsStrongEnough
+                end
+            end
+        end
+    })
+
+
+    isAutoEquipPickaxeEnabled = false
+    AutoEquipPickaxe = AutoMineSection:Toggle("AutoEquipBestPickaxe", {
+        Title = "Auto Equip Best Pickaxe",
+        Description = "Automatically equips the best pickaxe you own.",
+        Default = false,
+        Callback = function(enabled)
+            isAutoEquipPickaxeEnabled = enabled
+            if enabled then
+                task.spawn(function()
+                    while isAutoEquipPickaxeEnabled do
+                        pcall(function()
+                            DataController:waitForData()
+                            local playerData = DataController:getData()
+
+                            local pickaxeInventoryIndex = nil
+                            for inventoryIndex, itemData in pairs(playerData.inventory.exclusive) do
+                                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                local itemName = itemObj:getName()
+
+                                -- Check if it's a pickaxe
+                                if itemName:lower():find("pickaxe") then
+                                    pickaxeInventoryIndex = inventoryIndex
+                                    break
+                                end
+                            end
+
+                            if not pickaxeInventoryIndex then return end
+
+                            local isPickaxeEquipped = playerData.isPickaxeEquipped
+
+                            if not isPickaxeEquipped then
+                                -- Find and unequip currently equipped item first
+                                local currentEquippedIndex = nil
+                                
+                                -- Check if axe is equipped
+                                if playerData.isAxeEquipped then
+                                    for inventoryIndex, itemData in pairs(playerData.inventory.exclusive) do
+                                        local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                        local itemName = itemObj:getName()
+                                        if itemName:lower():find("axe") and not itemName:lower():find("pickaxe") then
+                                            currentEquippedIndex = inventoryIndex
+                                            break
+                                        end
+                                    end
+                                end
+                                
+                                -- Check if fishing rod is equipped
+                                if playerData.isFishingRodEquipped and not currentEquippedIndex then
+                                    for inventoryIndex, itemData in pairs(playerData.inventory.exclusive) do
+                                        local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                        local itemName = itemObj:getName()
+                                        if itemName:lower():find("fishingrod") or itemName:lower():find("rod") then
+                                            currentEquippedIndex = inventoryIndex
+                                            break
+                                        end
+                                    end
+                                end
+                                
+                                -- Unequip current item if found
+                                if currentEquippedIndex then
+                                    InventoryService:useItem(currentEquippedIndex)
+                                    task.wait(1)
+                                end
+
+                                -- Equip the pickaxe
+                                InventoryService:useItem(pickaxeInventoryIndex)
+                            end
+                        end)
+
+                        for i = 1, 50 do
+                            if not isAutoEquipPickaxeEnabled then break end
+                            task.wait(0.1)
+                        end
+                    end
+                end)
+            end
+        end
+    })
+    
+    task.spawn(function()
+        while true do
+            if AutoMine.Value == false then
+                AutoEquipPickaxe:SetValue(false)
+            elseif AutoMine.Value == true then
+                AutoEquipPickaxe:SetValue(true)
+            end
+            task.wait(5)
+        end
+    end)
+
+    local OreController = require(game:GetService("Players").LocalPlayer.PlayerScripts.Client.Controllers.OreController)
+
+    local lowerOreCooldownToggle = Tabs.Mine:Toggle("LowerOreCooldown", {
+        Title = "Reduce Mining Cooldown",
+        Description = "Reduces the cooldown between ore hits (about 1.5x faster). I believe this only works if you manually click.",
+        Default = false,
+        Callback = function(Value)
+            if Value then
+                OreController._debounce = {}
+                OreController._debounce = setmetatable({}, {
+                    __index = function() return false end,
+                    __newindex = function() end
+                })
+            else
+                OreController._debounce = {}
+            end
+        end
+    })
+local UndergroundMarketList = require(ReplicatedStorage.Shared.List.Mine.UndergroundMarket)
+
+   local MarketSection = Tabs.Mine:AddSection("Underground Market")
+
+    local function getAllMarketItems()
+        local options = {}
+        local itemMap = {}
+
+        for i, entry in ipairs(UndergroundMarketList) do
+            local itemAmount = entry.item.am or (typeof(entry.item.getAmount) == "function" and entry.item:getAmount()) or entry.item.amount or 1
+            local itemName = entry.item.nm or entry.item.am or (typeof(entry.item.getName) == "function" and entry.item:getName()) or tostring(entry.item) or "Unknown"
+            local priceAmount = entry.price.am or (typeof(entry.price.getAmount) == "function" and entry.price:getAmount()) or entry.price.amount or 1
+            local priceName = entry.price.nm or entry.price.am or (typeof(entry.price.getName) == "function" and entry.price:getName()) or tostring(entry.price) or "Unknown"
+            local display = string.format("%sx %s - %sx %s", itemAmount, itemName, priceAmount, priceName)
+            table.insert(options, display)
+            itemMap[display] = {
+                item = entry.item,
+                price = entry.price,
+                index = i,
+                amount = itemAmount,
+                itemName = itemName,
+                priceAmount = priceAmount,
+                priceName = priceName
+            }
+        end
+
+        return options, itemMap
+    end
+
+    local marketDropdownOptions, marketItemMap = getAllMarketItems()
+    local selectedMarketItems = {}
+
+    -- Dropdown for selecting market items
+    local marketDropdown = MarketSection:Dropdown("SelectMarketItems", {
+        Title = "Select Item(s)",
+        Description = "Choose Underground Market item(s) to target.",
+        Values = marketDropdownOptions,
+        Multi = true,
+        Searchable = true,
+        Default = {},
+        Callback = function(value)
+            selectedMarketItems = value
+            for itemDisplay, _ in pairs(selectedMarketItems) do
+            end
+        end
+    })
+
+    MarketSection:AddButton({
+        Title = "Select All Items",
+        Description = "Selects all Underground Market items in the dropdown.",
+        Callback = function()
+            local allSelected = {}
+            for _, optionName in ipairs(marketDropdownOptions) do
+                allSelected[optionName] = true
+            end
+            marketDropdown:SetValue(allSelected)
+            selectedMarketItems = allSelected
+        end
+    })
+
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Players = game:GetService("Players")
+
+    local Knit = require(ReplicatedStorage.Packages.Knit)
+    local DataController = Knit.GetController("DataController")
+    local Functions = require(ReplicatedStorage.Shared.Functions)
+    local UndergroundMarket = require(ReplicatedStorage.Shared.List.Mine.UndergroundMarket)
+    local Util = require(ReplicatedStorage.Shared.Util)
+
+    local player = Players.LocalPlayer
+
+    local function getSeed(p22)
+        local serverTime = Knit.serverTimeNow + 3600
+        local t = DateTime.fromUnixTimestamp(serverTime):ToUniversalTime()
+        local seed = t.Year * 222 + t.Month * 333 + t.Day * 444444 + t.Hour * 33333
+        local minuteSegment = math.floor(t.Minute / 10)
+        return seed + minuteSegment * 555 + player.UserId + p22
+    end
+    
+
+    local autoBuyEnabled = false
+    local autoBuyThread
+
+    MarketSection:Toggle("AutoBuyUndergroundMarket", {
+        Title = "Auto Buy Underground Market",
+        Description = "Automatically buys selected affordable and in-stock Underground Market items.",
+        Default = false,
+        Callback = function(state)
+            autoBuyEnabled = state
+            
+            if autoBuyEnabled then
+
+                autoBuyThread = task.spawn(function()
+                    local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                    local RewardService = KnitClient.GetService("RewardService")
+                    local cycleCount = 0
+                    
+                    while autoBuyEnabled do
+                        cycleCount = cycleCount + 1
+                        
+                        local playerData = DataController:getData()
+                        for i = 1, 5 do
+                            local seed = getSeed(i)
+                            local itemData = UndergroundMarket[Functions.getRandom(UndergroundMarket, seed)]
+                            
+                            -- Create display name for this item
+                            local itemAmount = itemData.item.am or (typeof(itemData.item.getAmount) == "function" and itemData.item:getAmount()) or itemData.item.amount or 1
+                            local itemName = itemData.item.nm or itemData.item.am or (typeof(itemData.item.getName) == "function" and itemData.item:getName()) or tostring(itemData.item) or "Unknown"
+                            local priceAmount = itemData.price.am or (typeof(itemData.price.getAmount) == "function" and itemData.price:getAmount()) or itemData.price.amount or 1
+                            local priceName = itemData.price.nm or itemData.price.am or (typeof(itemData.price.getName) == "function" and itemData.price:getName()) or tostring(itemData.price) or "Unknown"
+                            local display = string.format("%sx %s - %sx %s", itemAmount, itemName, priceAmount, priceName)
+                            
+                            
+                            -- Check if this item is selected
+                            local isSelected = false
+                            for selectedDisplay, _ in pairs(selectedMarketItems) do
+                                if selectedDisplay == display then
+                                    isSelected = true
+                                    break
+                                end
+                            end
+
+                            
+                            if isSelected then
+                                local priceItem = Util.itemUtils.getItemFromName(playerData, itemData.price:getName())
+                                local owned = priceItem and priceItem:getAmount() or 0
+                                local cost = itemData.price:getAmount()
+                                local affordable = owned >= cost
+                                local boughtData = playerData.undergroundMarketBought or {}
+                                local inStock = not boughtData[tostring(seed)]
+                                
+                                if inStock and affordable then
+                                    RewardService:buyUndergroundMarket(i)
+                                    task.wait(0.2)
+                                else
+                                    if not inStock then
+                                    elseif not affordable then
+                                    end
+                                end
+                            else
+                            end
+                        end
+                        task.wait(2)
+                    end
+                end)
+            else
+                if autoBuyThread then
+                    task.cancel(autoBuyThread)
+                    autoBuyThread = nil
+                end
+            end
+        end
+    })
+
+    
+    local MineUpgradesSection = Tabs.Mine:AddSection("Mine Upgrades")
+
+    local MineUpgrades = require(ReplicatedStorage.Shared.List.Mine.MineUpgrades)
+
+    local function getAllMineUpgrades()
+        local options = {}
+        local upgradeMap = {}
+        
+        for upgradeName, upgradeData in pairs(MineUpgrades) do
+            local formattedName = upgradeName:gsub("(%l)(%u)", "%1 %2"):gsub("^%l", string.upper)
+            table.insert(options, formattedName)
+            upgradeMap[formattedName] = {
+                id = upgradeName,
+                data = upgradeData
+            }
+        end
+        
+        table.sort(options)
+        return options, upgradeMap
+    end
+
+    local upgradeOptions, upgradeMap = getAllMineUpgrades()
+    local selectedUpgrades = {}
+
+    MineUpgradesSection:Dropdown("SelectMineUpgrades", {
+        Title = "Select Upgrades",
+        Description = "Choose which mine upgrades to auto-buy.",
+        Values = upgradeOptions,
+        Multi = true,
+        Searchable = true,
+        Default = {},
+        Callback = function(value)
+            selectedUpgrades = value
+        end
+    })
+
+    local autoUpgradeEnabled = false
+    local autoUpgradeThread
+
+    MineUpgradesSection:Toggle("AutoUpgradeMine", {
+        Title = "Auto Upgrade",
+        Description = "Automatically purchases selected mine upgrades when affordable.",
+        Default = false,
+        Callback = function(state)
+            autoUpgradeEnabled = state
+            
+            if autoUpgradeEnabled then
+                autoUpgradeThread = task.spawn(function()
+                    while autoUpgradeEnabled do
+                        pcall(function()
+                            DataController:waitForData()
+                            local playerData = DataController:getData()
+                            
+                            -- Iterate through selected upgrades
+                            for upgradeName, isSelected in pairs(selectedUpgrades) do
+                                if isSelected then
+                                    local upgradeInfo = upgradeMap[upgradeName]
+                                    if upgradeInfo then
+                                        local upgradeId = upgradeInfo.id
+                                        local currentLevel = playerData.mineUpgrades[upgradeId] or 0
+                                        local upgradeList = MineUpgrades[upgradeId].upgrades
+                                        local nextUpgrade = upgradeList[currentLevel + 1]
+                                        
+                                        if nextUpgrade then
+                                            -- Check if player can afford the upgrade
+                                            local costItem = Util.itemUtils.getItemFromName(playerData, nextUpgrade.cost:getName())
+                                            
+                                            if costItem and costItem:getAmount() >= nextUpgrade.cost:getAmount() then
+                                                -- Purchase the upgrade
+                                                local result = UpgradeService:upgradeMine(upgradeId)
+                                                
+                                                if result == "success" then
+                                                    task.wait(0.5)
+                                                end
+                                            end
+                                        else
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                        
+                        task.wait(2)
+                    end
+                end)
+            else
+                if autoUpgradeThread then
+                    task.cancel(autoUpgradeThread)
+                    autoUpgradeThread = nil
+                end
+            end
+        end})
+
+      
+    local OreProcessorSection = Tabs.Mine:AddSection("Process Ores")
+
+    local OresProcessor = require(ReplicatedStorage.Shared.List.Mine.OresProcessor)
+
+    -- Get all processor tiers
+    local function getAllProcessorTiers()
+        local tiers = {}
+        for processorId, processorData in pairs(OresProcessor) do
+            if type(processorId) == "number" then
+                table.insert(tiers, processorId)
+            end
+        end
+        table.sort(tiers)
+        return tiers
+    end
+
+    local tierOptions = getAllProcessorTiers()
+    local selectedTiers = {}
+
+    OreProcessorSection:Dropdown("SelectProcessorTiers", {
+        Title = "Select Tier(s)",
+        Description = "Choose which ore processor tier(s) to auto-craft.",
+        Values = tierOptions,
+        Multi = true,
+        Default = {},
+        Callback = function(value)
+            selectedTiers = value
+        end
+    })
+
+    local autoProcessEnabled = false
+    local autoProcessThread
+
+    OreProcessorSection:Toggle("AutoProcessOres", {
+        Title = "Auto Process",
+        Description = "Automatically processes ores -- when materials are available.",
+        Default = false,
+        Callback = function(state)
+            autoProcessEnabled = state
+            
+            if autoProcessEnabled then
+                autoProcessThread = task.spawn(function()
+                    local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                    local RewardService = KnitClient.GetService("RewardService")
+                    local DataController = require(game:GetService("ReplicatedStorage").Packages.Knit).GetController("DataController")
+                    local Util = require(game:GetService("ReplicatedStorage").Shared.Util)
+                    
+                    while autoProcessEnabled do
+                        pcall(function()
+                            DataController:waitForData()
+                            local playerData = DataController:getData()
+                            
+                            -- Iterate through selected tiers
+                            for tier, isSelected in pairs(selectedTiers) do
+                                if isSelected then
+                                    local processorData = OresProcessor[tier]
+                                    
+                                    if processorData and processorData.required then
+                                        -- Calculate max craftable amount
+                                        local maxCraftable = math.huge
+                                        
+                                        for _, requiredItem in ipairs(processorData.required) do
+                                            local itemName = requiredItem:getName()
+                                            local requiredAmount = requiredItem:getAmount()
+                                            
+                                            local currentItem = Util.itemUtils.getItemFromName(playerData, itemName)
+                                            local currentAmount = currentItem and currentItem:getAmount() or 0
+                                            
+                                            local craftableFromThisIngredient = math.floor(currentAmount / requiredAmount)
+                                            maxCraftable = math.min(maxCraftable, craftableFromThisIngredient)
+                                        end
+                                        
+                                        -- Only craft if we can afford at least 1
+                                        if maxCraftable > 0 and maxCraftable ~= math.huge then
+                                            RewardService:oreProcessor(tier, maxCraftable)
+                                            task.wait(0.5)
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                        
+                        task.wait(5)
+                    end
+                end)
+            else
+                if autoProcessThread then
+                    task.cancel(autoProcessThread)
+                    autoProcessThread = nil
+                end
+            end
+        end
+    })
+
+    local function printBestOreFor50Hits()
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local Ores = require(ReplicatedStorage.Shared.List.Mine.Ores)
+        local OreRooms = require(ReplicatedStorage.Shared.List.Mine.OreRooms)
+        local ExclusiveItems = require(ReplicatedStorage.Shared.List.Items.Exclusive)
+        
+        local function getPickaxeDamage()
+            local data = DataController:getData()
+            if data and data.inventory and data.inventory.exclusive then
+                for _, itemData in pairs(data.inventory.exclusive) do
+                    local itemObj = Util.itemUtils.createItemFromData(itemData)
+                    local itemName = itemObj:getName()
+                    
+                    if itemName:lower():find("pickaxe") then
+                        local pickaxeData = ExclusiveItems[itemName]
+                        if pickaxeData and pickaxeData.multiplier then
+                            local baseDamage = pickaxeData.multiplier
+                            local playerMultiplier = data.pickaxeDamageMultiplier or 0
+                            local totalDamage = baseDamage + playerMultiplier
+                            return totalDamage, pickaxeData.name or itemName
+                        end
+                    end
+                end
+            end
+            return 10, "Wooden Pickaxe"
+        end
+        
+        local pickaxeDamage, pickaxeName = getPickaxeDamage()
+        local maxHits = 75
+        local maxHP = pickaxeDamage * maxHits
+
+        
+        -- Find all beatable ores
+        local beatableOres = {}
+        for oreId, oreData in pairs(Ores) do
+            local hitsNeeded = math.ceil(oreData.hp / pickaxeDamage)
+            if hitsNeeded <= maxHits then
+                -- Calculate total rewards value
+                local totalSpaceStones = 0
+                local hasOreReward = false
+                
+                if oreData.rewards then
+                    for _, reward in ipairs(oreData.rewards) do
+                        local rewardName = reward:getName() or ""
+                        if rewardName:lower():find("spacestones") then
+                            totalSpaceStones = totalSpaceStones + (reward:getAmount() or 0)
+                        end
+                        if rewardName:lower():find("ore") then
+                            hasOreReward = true
+                        end
+                    end
+                end
+                
+                table.insert(beatableOres, {
+                    id = oreId,
+                    name = oreData.name or oreId,
+                    hp = oreData.hp,
+                    hitsNeeded = hitsNeeded,
+                    spaceStones = totalSpaceStones,
+                    hasOreReward = hasOreReward,
+                    rewards = oreData.rewards or {},
+                    requiredPickaxeDamage = oreData.requiredPickaxeDamage or 0
+                })
+            end
+        end
+        
+        if #beatableOres == 0 then
+            return
+        end
+        
+        -- Sort by Space Stones reward (highest first)
+        table.sort(beatableOres, function(a, b) 
+            return a.spaceStones > b.spaceStones
+        end)
+        
+        local bestOre = beatableOres[1]
+
+        
+        if bestOre.rewards and #bestOre.rewards > 0 then
+            for _, reward in ipairs(bestOre.rewards) do
+                local rewardName = reward:getName() or "Unknown"
+                local rewardAmount = reward:getAmount() or 0
+                local formattedAmount = string.format("%d", rewardAmount):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+                
+                local icon = "   "
+                if rewardName:lower():find("stone") or rewardName:lower():find("coin") then
+                    icon = "💰"
+                elseif rewardName:lower():find("gem") then
+                    icon = "💎"
+                elseif rewardName:lower():find("ore") then
+                    icon = "⛏️"
+                end
+            end
+        end
+        
+        local oreRooms = {}
+        for roomName, roomData in pairs(OreRooms) do
+            if roomData.ores and roomData.ores[bestOre.id] then
+                table.insert(oreRooms, {
+                    room = roomName,
+                    chance = roomData.ores[bestOre.id]
+                })
+            end
+        end
+        
+        if #oreRooms > 0 then
+            table.sort(oreRooms, function(a, b) return a.chance > b.chance end)
+            for i, roomInfo in ipairs(oreRooms) do
+                if i <= 3 then 
+                end
+            end
+        else
+        end
+        
+        for i = 2, math.min(5, #beatableOres) do
+            local ore = beatableOres[i]
+        end
+    end
+
+        
+    local PickaxeUpgradeSection = Tabs.Mine:AddSection("Auto Upgrade Pickaxe")
+
+    local PickaxeUpgrader = require(ReplicatedStorage.Shared.List.Mine.PickaxeUpgrader)
+    local ExclusiveItems = require(ReplicatedStorage.Shared.List.Items.Exclusive)
+
+    -- Get current pickaxe index
+    local function getCurrentPickaxeIndex()
+        local playerData = DataController:getData()
+        if playerData and playerData.inventory and playerData.inventory.exclusive then
+            for _, itemData in pairs(playerData.inventory.exclusive) do
+                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                if itemObj:getName():lower():find("pickaxe") then
+                    return itemObj:directory()[itemObj:getName()].index
+                end
+            end
+        end
+        return nil
+    end
+
+    -- Get pickaxe from index
+    local function getPickaxeFromIndex(index)
+        for itemName, itemData in pairs(ExclusiveItems) do
+            if itemName:lower():find("pickaxe") and itemData.index == index then
+                return itemName, itemData
+            end
+        end
+        return nil, nil
+    end
+
+    -- Status paragraph
+    local PickaxeStatusParagraph = PickaxeUpgradeSection:Paragraph("PickaxeUpgradeStatus", {
+        Title = "Pickaxe Upgrade",
+        Content = "Loading upgrade info...",
+        TitleAlignment = "Middle",
+        ContentAlignment = Enum.TextXAlignment.Left
+    })
+
+    -- Update status function
+    local function updatePickaxeUpgradeStatus()
+        return pcall(function()
+            local playerData = DataController:getData()
+            local currentIndex = getCurrentPickaxeIndex()
+            
+            if not currentIndex then
+                PickaxeStatusParagraph:SetValue("❌ No pickaxe found in inventory!")
+                return false, {}, 0
+            end
+
+            local nextPickaxeName, nextPickaxeData = getPickaxeFromIndex(currentIndex + 1)
+            
+            if not nextPickaxeName then
+                PickaxeStatusParagraph:SetValue("🎉 You have the maximum pickaxe!")
+                return false, {}, 0
+            end
+
+            local pickaxeRequirements = PickaxeUpgrader[nextPickaxeName]
+            if not pickaxeRequirements or not pickaxeRequirements.required then
+                PickaxeStatusParagraph:SetValue("❌ No requirements found for next pickaxe!")
+                return false, {}, 0
+            end
+
+            local statusLines = {}
+            table.insert(statusLines, "🎯 Next: " .. nextPickaxeName)
+            table.insert(statusLines, string.format("⚡ Damage: %s", string.format("%d", nextPickaxeData.multiplier):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")))
+            table.insert(statusLines, "")
+            table.insert(statusLines, "📋 Materials Needed:")
+
+            local canUpgrade = true
+            local neededOreNames = {}
+            local needsOnlySpaceStones = true
+
+            for i, requiredItem in ipairs(pickaxeRequirements.required) do
+                local itemName = requiredItem:getName()
+                local requiredAmount = requiredItem:getAmount()
+
+                local currentItem = Util.itemUtils.getItemFromName(playerData, itemName)
+                local currentAmount = currentItem and currentItem:getAmount() or 0
+
+                local hasEnough = requiredAmount <= currentAmount
+                if not hasEnough then canUpgrade = false end
+
+                local status = hasEnough and "✅" or "❌"
+                local progress = string.format("%s/%s", 
+                    string.format("%d", currentAmount):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""),
+                    string.format("%d", requiredAmount):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+                )
+
+                table.insert(statusLines, string.format("%s %s: %s", status, itemName, progress))
+                
+                if not hasEnough then
+                    if not (itemName:lower():find("spacestones") or itemName:lower():find("spacestone")) then
+                        
+                        table.insert(neededOreNames, itemName)
+                        needsOnlySpaceStones = false
+                    end
+                end
+            end
+
+            table.insert(statusLines, "")
+            table.insert(statusLines, "🔨 Status: " .. (canUpgrade and "Ready to upgrade!" or "Need more materials"))
+
+            PickaxeStatusParagraph:SetValue(table.concat(statusLines, "\n"))
+            return canUpgrade, neededOreNames, needsOnlySpaceStones and 1 or 0
+        end)
+    end
+
+    -- Auto update status every 5 seconds
+    task.spawn(function()
+        while true do
+            updatePickaxeUpgradeStatus()
+            task.wait(5)
+        end
+    end)
+
+   
+    local autoUpgradePickaxeEnabled = false
+    local autoUpgradePickaxeThread
+    local previousOreSelection = {}
+
+    PickaxeUpgradeSection:Toggle("AutoUpgradePickaxe", {
+        Title = "Auto Upgrade Pickaxe",
+        Description = "Automatically upgrades your pickaxe when materials are available.\n\n⚠️ If materials are needed:\n• Selects required ores\n• If only Space Stones needed, mines best ore for 75 hits\n• Enables Auto Mine\n• Restores previous ore selection when done",
+        Default = false,
+        Callback = function(enabled)
+            autoUpgradePickaxeEnabled = enabled
+            
+            if autoUpgradePickaxeEnabled then
+                -- Store current ore selection before changing it
+                previousOreSelection = {}
+                for _, oreName in ipairs(selectedOres) do
+                    previousOreSelection[oreName] = true
+                end
+                
+                autoUpgradePickaxeThread = task.spawn(function()
+                    local lastUpgradedIndex = nil
+                    
+                    while autoUpgradePickaxeEnabled do
+                        pcall(function()
+                            local success, canUpgrade, neededOreNames, needsOnlySpaceStones = updatePickaxeUpgradeStatus()
+                            
+                            if not success then
+                                return
+                            end
+                            
+                            local currentIndex = getCurrentPickaxeIndex()
+                            
+                            if canUpgrade and currentIndex ~= lastUpgradedIndex then
+                                -- Can afford upgrade - purchase it
+                                lastUpgradedIndex = currentIndex
+                                
+                                local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                                local PickaxeService = KnitClient.GetService("PickaxeService")
+                                
+                                local result = PickaxeService:upgradePickaxe()
+                                if result == "success" then
+                                    task.wait(1)
+                                end
+                            elseif not canUpgrade then
+                                
+                                if needsOnlySpaceStones == 1 then
+                                    -- Define getPickaxeDamage ONCE, outside the loop
+                                    local function getPickaxeDamage()
+                                        local data = DataController:getData()
+                                        if data and data.inventory and data.inventory.exclusive then
+                                            for _, itemData in pairs(data.inventory.exclusive) do
+                                                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                local itemName = itemObj:getName()
+                                                
+                                                if itemName:lower():find("pickaxe") then
+                                                    local pickaxeData = ExclusiveItems[itemName]
+                                                    if pickaxeData and pickaxeData.multiplier then
+                                                        local baseDamage = pickaxeData.multiplier
+                                                        local playerMultiplier = data.pickaxeDamageMultiplier or 0
+                                                        local totalDamage = baseDamage + playerMultiplier
+                                                        return totalDamage, pickaxeData.name or itemName
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        return 10, "Wooden Pickaxe"
+                                    end
+                                    
+                                    -- Now call it
+                                    local pickaxeDamage, pickaxeName = getPickaxeDamage()
+                                    local maxHits = 75
+                                    
+                                    -- Find best beatable ore
+                                    local bestOre = nil
+                                    local bestSpaceStones = 0
+                                    
+                                    for oreId, oreData in pairs(Ores) do
+                                        local hitsNeeded = math.ceil(oreData.hp / pickaxeDamage)
+                                        if hitsNeeded <= maxHits then
+                                            local totalSpaceStones = 0
+                                            
+                                            if oreData.rewards then
+                                                for _, reward in ipairs(oreData.rewards) do
+                                                    local rewardName = reward:getName() or ""
+                                                    if rewardName:lower():find("spacestones") then
+                                                        totalSpaceStones = totalSpaceStones + (reward:getAmount() or 0)
+                                                    end
+                                                end
+                                            end
+                                            
+                                            if totalSpaceStones > bestSpaceStones then
+                                                bestSpaceStones = totalSpaceStones
+                                                bestOre = {
+                                                    id = oreId,
+                                                    name = oreData.name or oreId,
+                                                    formattedName = rawToFormatted[oreId]
+                                                }
+                                            end
+                                        end
+                                    end
+                                    
+                                    if bestOre and bestOre.formattedName then
+                                        SelectOres:SetValue({[bestOre.formattedName] = true})
+                                        selectedOres = {bestOre.formattedName}
+                                    end  
+                                                                
+                                else
+                                    -- Need to mine specific ores
+                                    local dropdownSelection = {}
+                                    selectedOres = {}
+                                    
+                                    for _, neededOreName in ipairs(neededOreNames) do
+                                        local oreFound = false
+                                        
+                                        local oreType = neededOreName:gsub("%s*Ore$", ""):lower()
+                                        
+                                        -- Search through values array (dropdown options)
+                                        for _, formattedName in ipairs(values) do
+                                            -- Remove "Ore" suffix from dropdown name too
+                                            local dropdownOreType = formattedName:gsub("%s*Ore$", ""):lower()
+                                            
+                                            -- Check if this ore type matches (case-insensitive)
+                                            if dropdownOreType == oreType then
+                                                dropdownSelection[formattedName] = true
+                                                table.insert(selectedOres, formattedName)
+                                                oreFound = true
+                                                break
+                                            end
+                                        end
+                                        
+                                        if not oreFound then
+                                        end
+                                    end
+                                    
+                                    -- Update dropdown visually
+                                    if next(dropdownSelection) then
+                                        SelectOres:SetValue(dropdownSelection)
+                                    end
+                                end
+                                
+                                -- Enable Auto Mine if not already enabled
+                                if not AutoBreakEnabled then
+                                    AutoMine:SetValue(true)
+                                end
+                            end
+                        end)
+                        
+                        task.wait(3)
+                    end
+                end)
+            elseif HasBeenTurnedOn == true then
+                if autoUpgradePickaxeThread then
+                    task.cancel(autoUpgradePickaxeThread)
+                    autoUpgradePickaxeThread = nil
+                end
+                
+                -- Restore the stored selection
+                SelectOres:SetValue(previousOreSelection)
+                selectedOres = {}
+                for oreName, _ in pairs(previousOreSelection) do
+                    table.insert(selectedOres, oreName)
+                end
+            end
+        end
+    })
+
+
+    local MinerQuestSection = Tabs.Mine:AddSection("Auto Miner Quest")
+
+    local MinerQuests = require(ReplicatedStorage.Shared.List.Mine.MinerQuests)
+
+    -- Status paragraph
+    local MinerQuestStatusParagraph = MinerQuestSection:Paragraph("MinerQuestStatus", {
+        Title = "Miner Quest Progress",
+        Content = "Loading quest status...",
+        TitleAlignment = "Middle",
+        ContentAlignment = Enum.TextXAlignment.Left
+    })
+
+    -- Update status function
+    local function updateMinerQuestStatus()
+        return pcall(function()
+            DataController:waitForData()
+            local playerData = DataController:getData()
+            
+            if not playerData then
+                MinerQuestStatusParagraph:SetValue("❌ Could not get player data")
+                return nil
+            end
+            
+            local currentTier = playerData.minerQuestTier or 1
+            local currentProgress = playerData.minerQuestProgress or 0
+            
+            if currentTier > #MinerQuests then
+                MinerQuestStatusParagraph:SetValue("🎉 Completed all Miner Quests!")
+                return nil
+            end
+            
+            local questData = MinerQuests[currentTier]
+            if not questData then
+                MinerQuestStatusParagraph:SetValue("❌ No quest found for current tier")
+                return nil
+            end
+            
+            local statusLines = {}
+            table.insert(statusLines, string.format("📋 Tier: %d/%d", currentTier, #MinerQuests))
+            table.insert(statusLines, string.format("🎯 Quest: %s", questData.text:format(questData.quest.amount)))
+            table.insert(statusLines, string.format("📊 Progress: %d/%d (%d%%)", 
+                currentProgress, 
+                questData.quest.amount,
+                math.floor((currentProgress / questData.quest.amount) * 100)
+            ))
+            
+            -- Show rewards
+            if questData.rewards and #questData.rewards > 0 then
+                table.insert(statusLines, "")
+                table.insert(statusLines, "🎁 Rewards:")
+                for _, reward in ipairs(questData.rewards) do
+                    local rewardName = reward.getName and reward:getName() or reward.nm or tostring(reward)
+                    local amount = reward.getAmount and reward:getAmount() or reward.am or 1
+                    table.insert(statusLines, string.format("  • %s x%d", rewardName, amount))
+                end
+            end
+            
+            MinerQuestStatusParagraph:SetValue(table.concat(statusLines, "\n"))
+            return questData.quest
+        end)
+    end
+
+    -- Auto update status every 5 seconds
+    task.spawn(function()
+        while true do
+            updateMinerQuestStatus()
+            task.wait(5)
+        end
+    end)
+
+    -- Auto Quest Variables
+    local autoMinerQuestEnabled = false
+    local autoMinerQuestThread
+    local previousMinerQuestSettings = {}
+
+  -- Auto Quest Toggle
+    MinerQuestSection:Toggle("AutoCompleteMinerQuest", {
+        Title = "Auto Complete Miner Quest",
+        Description = "Automatically completes miner quests by selecting appropriate ores and enabling auto mine.",
+        Default = false,
+        Callback = function(enabled)
+            autoMinerQuestEnabled = enabled
+
+            if autoMinerQuestEnabled then
+                HasBeenTurnedOn = true
+                
+                -- Store previous settings
+                previousMinerQuestSettings = {
+                    selectedOres = {},
+                    autoMineEnabled = AutoMine.Value
+                }
+                for _, oreName in ipairs(selectedOres) do
+                    previousMinerQuestSettings.selectedOres[oreName] = true
+                end
+
+                autoMinerQuestThread = task.spawn(function()
+                    local lastQuestTier = nil
+                    
+                    while autoMinerQuestEnabled do
+                        pcall(function()
+                            local success, questData = updateMinerQuestStatus()
+                            
+                            if not success or not questData then
+                                return
+                            end
+                            
+                            local playerData = DataController:getData()
+                            local currentTier = playerData.minerQuestTier or 1
+                            local questType = questData.quest
+                            local questName = questData.name
+                            local currentProgress = playerData.minerQuestProgress or 0
+                            local required = questData.amount
+                            
+                            
+                            -- Check if quest is complete
+                            if currentProgress >= required then
+                                local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                                local QuestService = KnitClient.GetService("QuestService")
+                                QuestService:claimMinerQuest()
+                                
+                                
+                                if HasBeenTurnedOn == true  and previousMinerQuestSettings and previousMinerQuestSettings.selectedOres and next(previousMinerQuestSettings.selectedOres) then
+                                    SelectOres:SetValue(previousMinerQuestSettings.selectedOres)
+                                    selectedOres = {}
+                                    for oreName, _ in pairs(previousMinerQuestSettings.selectedOres) do
+                                        table.insert(selectedOres, oreName)
+                                    end
+                                end
+                                
+                                if HasBeenTurnedOn == true and previousMinerQuestSettings and AutoMine.Value ~= previousMinerQuestSettings.autoMineEnabled then
+                                    AutoMine:SetValue(previousMinerQuestSettings.autoMineEnabled)
+                                end
+                                
+                                
+                                task.wait(2)
+                                
+                                -- Check if there's a next quest
+                                local nextQuestData = MinerQuests[currentTier + 1]
+                                if nextQuestData then
+                                    lastQuestTier = currentTier
+                                else
+                                    autoMinerQuestEnabled = false
+                                end
+                                return
+                            end
+                            
+                            -- Store settings when starting a new quest tier
+                            if lastQuestTier ~= currentTier then
+                                previousMinerQuestSettings = {
+                                    selectedOres = {},
+                                    autoMineEnabled = AutoMine.Value
+                                }
+                                for _, oreName in ipairs(selectedOres) do
+                                    previousMinerQuestSettings.selectedOres[oreName] = true
+                                end
+                                lastQuestTier = currentTier
+                            end
+
+
+                            if questType == "destroyOre" and questName then
+                                -- Select specific ore
+                                local oreType = questName:gsub("Ore$", ""):gsub("ore$", ""):lower()
+                                
+                                local dropdownSelection = {}
+                                selectedOres = {}
+                                
+                                for _, formattedName in ipairs(values) do
+                                    local dropdownOreType = formattedName:gsub("%s*Ore$", ""):lower()
+                                                                        
+                                    -- FIXED: Use exact case-insensitive match
+                                    if dropdownOreType == oreType then
+                                        dropdownSelection[formattedName] = true
+                                        table.insert(selectedOres, formattedName)
+                                        break
+                                    end
+                                end
+                                
+                                if next(dropdownSelection) then
+                                    SelectOres:SetValue(dropdownSelection)
+                                end
+                                
+                                -- Enable auto mine
+                                if not AutoBreakEnabled then
+                                    AutoMine:SetValue(true)
+                                end
+                                
+                            elseif questType == "destroyAnyOre" then
+                                
+                                -- Select iron, gold, and diamond ores
+                                local dropdownSelection = {}
+                                selectedOres = {}
+                                
+                                local targetOres = {"iron", "gold", "diamond"}
+                                
+                                for _, formattedName in ipairs(values) do
+                                    local oreNameLower = formattedName:lower()
+                                    
+                                    for _, targetOre in ipairs(targetOres) do
+                                        if oreNameLower:find(targetOre) then
+                                            dropdownSelection[formattedName] = true
+                                            table.insert(selectedOres, formattedName)
+                                            break
+                                        end
+                                    end
+                                end
+                                
+                                
+                                if next(dropdownSelection) then
+                                    SelectOres:SetValue(dropdownSelection)
+                                end
+                                
+                                -- Enable auto mine
+                                if not AutoBreakEnabled then
+                                    AutoMine:SetValue(true)
+                                else
+                                end
+                                
+elseif questType == "openEgg" and questName then
+                                
+                                local function getPickaxeDamage()
+                                    local data = DataController:getData()
+                                    if data and data.inventory and data.inventory.exclusive then
+                                        for _, itemData in pairs(data.inventory.exclusive) do
+                                            local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                            local itemName = itemObj:getName()
+                                            
+                                            if itemName:lower():find("pickaxe") then
+                                                local pickaxeData = ExclusiveItems[itemName]
+                                                if pickaxeData and pickaxeData.multiplier then
+                                                    -- Get base pickaxe damage
+                                                    local baseDamage = pickaxeData.multiplier
+                                                    
+                                                    -- Add player's pickaxeDamageMultiplier from data
+                                                    local playerMultiplier = data.pickaxeDamageMultiplier or 0
+                                                    local totalDamage = baseDamage + playerMultiplier
+                                                    
+                                                    return totalDamage, pickaxeData.name or itemName
+                                                end
+                                            end
+                                        end
+                                    end
+                                    return 10, "Wooden Pickaxe"
+                                end
+
+                                local pickaxeDamage, pickaxeName = getPickaxeDamage()
+                                local maxHits = 75
+                                
+                                local bestOre = nil
+                                local bestSpaceStones = 0
+                                
+                                for oreId, oreData in pairs(Ores) do
+                                    local hitsNeeded = math.ceil(oreData.hp / pickaxeDamage)
+                                    if hitsNeeded <= maxHits then
+                                        local totalSpaceStones = 0
+                                        
+                                        if oreData.rewards then
+                                            for _, reward in ipairs(oreData.rewards) do
+                                                local rewardName = reward:getName() or ""
+                                                if rewardName:lower():find("spacestones") then
+                                                    totalSpaceStones = totalSpaceStones + (reward:getAmount() or 0)
+                                                end
+                                            end
+                                        end
+                                        
+                                        if totalSpaceStones > bestSpaceStones then
+                                            bestSpaceStones = totalSpaceStones
+                                            bestOre = {
+                                                id = oreId,
+                                                name = oreData.name or oreId,
+                                                formattedName = rawToFormatted[oreId]
+                                            }
+                                        end
+                                    end
+                                end
+                                
+                                if bestOre and bestOre.formattedName then
+                                    -- Update dropdown and selectedOres
+                                    SelectOres:SetValue({[bestOre.formattedName] = true})
+                                    selectedOres = {bestOre.formattedName}
+                                    
+                                    -- Enable auto mine
+                                    if not AutoBreakEnabled then
+                                        AutoMine:SetValue(true)
+                                    end
+                                end
+
+                                local lastQuestCheck = tick()
+                                while true do
+                                    -- Check if quest is still active every 3 seconds
+                                    if tick() - lastQuestCheck >= 3 then
+                                        local currentData = DataController:getData()
+                                        local questStillActive = false
+                                        
+                                        if currentData and currentData.quests and currentData.quests.active then
+                                            for _, activeQuest in pairs(currentData.quests.active) do
+                                                if activeQuest.questId == questId then
+                                                    questStillActive = true
+                                                    break
+                                                end
+                                            end
+                                        end
+                                        
+                                        if not questStillActive then
+                                            break
+                                        end
+                                        
+                                        lastQuestCheck = tick()
+                                    end
+                                    
+                                    if not HatchingController._isHatching then
+                                        EggService.openEgg._re:FireServer(questName, 99)
+                                    end
+                                    
+                                    task.wait(0.2)
+                                end
+                            end
+                        end)
+                        
+                        task.wait(3)
+                    end
+                end)
+            else            
+                -- Restore previous settings
+                if autoMinerQuestThread then
+                    task.cancel(autoMinerQuestThread)
+                    autoMinerQuestThread = nil
+                end
+                
+                if previousMinerQuestSettings and previousMinerQuestSettings.selectedOres and next(previousMinerQuestSettings.selectedOres) then
+                    SelectOres:SetValue(previousMinerQuestSettings.selectedOres)
+                    selectedOres = {}
+                    for oreName, _ in pairs(previousMinerQuestSettings.selectedOres) do
+                        table.insert(selectedOres, oreName)
+                    end
+                end
+                
+                if HasBeenTurnedOn == true and previousMinerQuestSettings and AutoMine.Value ~= previousMinerQuestSettings.autoMineEnabled then
+                    AutoMine:SetValue(previousMinerQuestSettings.autoMineEnabled)
+                end
+            end
+        end
+    })
+
+
+    local AutoBuildSection = Tabs.Building:AddSection("Auto Build")
+
+    AutoBuildSection:Paragraph("AutoBuildNote", {
+        Title = "Note",
+        Content = "This will automatically mine ores needed for selected buildings. For buildings requiring processed ores, make sure to enable Auto Process Ores. Space Stones will be mined from the best ore you can beat in 75 hits.",
+        TitleAlignment = "Middle",
+        ContentAlignment = Enum.TextXAlignment.Left
+    })
+
+    local AutoBuildResourceStatus = AutoBuildSection:Paragraph("AutoBuildResourceStatus", {
+        Title = "Resource Status",
+        Content = "Select buildings to see resource requirements",
+        TitleAlignment = "Middle",
+        ContentAlignment = Enum.TextXAlignment.Left
+    })
+
+    -- Get all buildings that require ores
+    local function getBuildingsWithOres()
+        local options, buildingMap = {}, {}
+        pcall(function()
+            local Buildings = require(ReplicatedStorage.Shared.List.Buildings)
+            local playerData = DataController:getData()
+            if not playerData then return end
+
+            for buildingId, buildingData in pairs(Buildings) do
+                local isBuilt = playerData.buildings and playerData.buildings[buildingId] or false
+                if not isBuilt and buildingData.name and buildingData.required then
+                    -- Check if building requires ore
+                    local hasOre = false
+                    for _, requiredItem in ipairs(buildingData.required) do
+                        local itemName = requiredItem:getName()
+                        if itemName:lower():find("ore") then
+                            hasOre = true
+                            break
+                        end
+                    end
+                    
+                    if hasOre then
+                        local displayName = buildingData.name
+                        table.insert(options, displayName)
+                        buildingMap[displayName] = buildingId
+                    end
+                end
+            end
+        end)
+        table.sort(options)
+        return options, buildingMap
+    end
+
+    local autoBuildOptions, autoBuildBuildingMap = getBuildingsWithOres()
+    local autoBuildDropdown
+
+    local function updateAutoBuildResourceStatus()
+        local Buildings = require(ReplicatedStorage.Shared.List.Buildings)
+        local playerData = DataController:getData()
+        if not playerData then return end
+        
+        local missingResources = {}
+        
+        if autoBuildDropdown and autoBuildDropdown.Value then
+            for buildingName, isSelected in pairs(autoBuildDropdown.Value) do
+                if isSelected then
+                    local buildingId = autoBuildBuildingMap[buildingName]
+                    local buildingData = Buildings[buildingId]
+                    
+                    if buildingData and buildingData.required then
+                        for _, requiredItem in ipairs(buildingData.required) do
+                            local itemName = requiredItem:getName()
+                            local requiredAmount = requiredItem:getAmount()
+                            
+                            local currentItem = Util.itemUtils.getItemFromName(playerData, itemName)
+                            local currentAmount = currentItem and currentItem:getAmount() or 0
+                            
+                            if currentAmount < requiredAmount then
+                                local needed = requiredAmount - currentAmount
+                                missingResources[itemName] = (missingResources[itemName] or 0) + needed
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        if not next(missingResources) then
+            AutoBuildResourceStatus:SetValue("✅ All selected buildings can be crafted!")
+            return
+        end
+        
+        local statusLines = {"📋 Missing Resources:"}
+        for itemName, amount in pairs(missingResources) do
+            table.insert(statusLines, string.format("  • %s: %s", itemName, Functions.comma(amount)))
+        end
+        
+        AutoBuildResourceStatus:SetValue(table.concat(statusLines, "\n"))
+    end
+
+    autoBuildDropdown = AutoBuildSection:Dropdown("SelectBuildingsToAutoBuild", {
+        Title = "Select Buildings to Auto Build",
+        Description = "Select buildings that require ores. The script will mine needed ores automatically.",
+        Values = autoBuildOptions,
+        Multi = true,
+        Searchable = true,
+        Default = {}
+    })
+
+    autoBuildDropdown:OnChanged(function(value)
+        updateAutoBuildResourceStatus()
+    end)
+
+    AutoBuildSection:Button({
+        Title = "Refresh Building List",
+        Description = "Updates the list of available buildings",
+        Callback = function()
+            local newOptions, newBuildingMap = getBuildingsWithOres()
+            autoBuildOptions = newOptions
+            autoBuildBuildingMap = newBuildingMap
+            autoBuildDropdown:SetValues(newOptions)
+            autoBuildDropdown:SetValue({})
+            updateAutoBuildResourceStatus()
+        end
+    })
+
+    local isAutoBuildEnabled = false
+    local autoBuildThread
+    local previousAutoBuildSettings = {}
+
+    AutoBuildSection:Toggle("AutoBuild", {
+        Title = "Auto Build",
+        Description = "Automatically mines required ores and builds selected buildings.",
+        Default = false,
+        Callback = function(enabled)
+            isAutoBuildEnabled = enabled
+            
+            if enabled then
+                HasBeenTurnedOn1 = true
+                -- Store previous settings
+                previousAutoBuildSettings.selectedOres = {}
+                for _, oreName in ipairs(selectedOres) do
+                    previousAutoBuildSettings.selectedOres[oreName] = true
+                end
+                previousAutoBuildSettings.autoMineEnabled = AutoMine.Value
+                
+                autoBuildThread = task.spawn(function()
+                    while isAutoBuildEnabled do
+                        pcall(function()
+                            local playerData = DataController:getData()
+                            if not playerData then return end
+                            
+                            local Buildings = require(ReplicatedStorage.Shared.List.Buildings)
+                            local ExclusiveItems = require(ReplicatedStorage.Shared.List.Items.Exclusive)
+                            local selectedBuildings = autoBuildDropdown.Value or {}
+                            
+                            local neededOres = {}
+                            local canBuildSomething = false
+                            
+                            for buildingName, isSelected in pairs(selectedBuildings) do
+                                if isSelected then
+                                    local buildingId = autoBuildBuildingMap[buildingName]
+                                    local buildingData = Buildings[buildingId]
+                                    
+                                    if buildingData and not (playerData.buildings and playerData.buildings[buildingId]) then
+                                        -- Check if can afford
+                                        local canAfford = true
+                                        for _, requiredItem in ipairs(buildingData.required) do
+                                            local itemName = requiredItem:getName()
+                                            local requiredAmount = requiredItem:getAmount()
+                                            
+                                            local currentItem = Util.itemUtils.getItemFromName(playerData, itemName)
+                                            local currentAmount = currentItem and currentItem:getAmount() or 0
+                                            
+                                            if currentAmount < requiredAmount then
+                                                canAfford = false
+                                                if itemName:lower():find("ore") then
+                                                    table.insert(neededOres, itemName)
+                                                end
+                                            end
+                                        end
+                                        
+                                        if canAfford then
+                                            BuildingService:build(buildingId)
+                                            task.wait(2)
+                                            canBuildSomething = true
+                                        end
+                                    end
+                                end
+                            end              
+
+                            if #neededOres > 0 then
+                                local dropdownSelection = {}
+                                selectedOres = {}
+                                
+                                for _, neededOreName in ipairs(neededOres) do
+                                    if neededOreName:lower():find("spacestones") then
+                                        local function getPickaxeDamage()
+                                            local data = DataController:getData()
+                                            if data and data.inventory and data.inventory.exclusive then
+                                                for _, itemData in pairs(data.inventory.exclusive) do
+                                                    local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                    local itemName = itemObj:getName()
+                                                    
+                                                    if itemName:lower():find("pickaxe") then
+                                                        local pickaxeData = ExclusiveItems[itemName]
+                                                        if pickaxeData and pickaxeData.multiplier then
+                                                            -- Get base pickaxe damage
+                                                            local baseDamage = pickaxeData.multiplier
+                                                            
+                                                            -- Add player's pickaxeDamageMultiplier from data
+                                                            local playerMultiplier = data.pickaxeDamageMultiplier or 0
+                                                            local totalDamage = baseDamage + playerMultiplier
+                                                            
+                                                            return totalDamage, pickaxeData.name or itemName
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                            return 10, "Wooden Pickaxe"
+                                        end
+                                        
+                                        local pickaxeDamage, pickaxeName = getPickaxeDamage()
+                                        local maxHits = 75
+                                        
+                                        -- Find best beatable ore (highest Space Stones reward)
+                                        local bestOre = nil
+                                        local bestSpaceStones = 0
+                                        
+                                        for oreId, oreData in pairs(Ores) do
+                                            local hitsNeeded = math.ceil(oreData.hp / pickaxeDamage)
+                                            if hitsNeeded <= maxHits then
+                                                local totalSpaceStones = 0
+                                                
+                                                if oreData.rewards then
+                                                    for _, reward in ipairs(oreData.rewards) do
+                                                        local rewardName = reward:getName() or ""
+                                                        if rewardName:lower():find("spacestones") then
+                                                            totalSpaceStones = totalSpaceStones + (reward:getAmount() or 0)
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                if totalSpaceStones > bestSpaceStones then
+                                                    bestSpaceStones = totalSpaceStones
+                                                    bestOre = {
+                                                        id = oreId,
+                                                        name = oreData.name or oreId,
+                                                        formattedName = rawToFormatted[oreId]
+                                                    }
+                                                end
+                                            end
+                                        end
+                                        
+                                        if bestOre and bestOre.formattedName then
+                                            dropdownSelection[bestOre.formattedName] = true
+                                            table.insert(selectedOres, bestOre.formattedName)
+                                        end
+                                    else
+                                        -- Find matching ore (case insensitive)
+                                        local oreType = neededOreName:gsub("%s*Ore$", ""):lower()
+                                        
+                                        for _, formattedName in ipairs(values) do
+                                            local dropdownOreType = formattedName:gsub("%s*Ore$", ""):lower()
+                                            
+                                            if dropdownOreType == oreType then
+                                                dropdownSelection[formattedName] = true
+                                                table.insert(selectedOres, formattedName)
+                                                break
+                                            end
+                                        end
+                                    end
+                                end
+                                
+                                if next(dropdownSelection) then
+                                    SelectOres:SetValue(dropdownSelection)
+                                end
+                                
+                                if not AutoBreakEnabled then
+                                    AutoMine:SetValue(true)
+                                end
+                            elseif canBuildSomething and AutoBreakEnabled then
+                                AutoMine:SetValue(false)
+                            end
+                        end)
+                        
+                        task.wait(3)
+                    end
+                end)
+            else
+                if autoBuildThread then
+                    task.cancel(autoBuildThread)
+                    autoBuildThread = nil
+                end
+                
+                -- Restore previous settings
+                if HasBeenTurnedOn1 == true and previousAutoBuildSettings and previousAutoBuildSettings.selectedOres and next(previousAutoBuildSettings.selectedOres) then
+                    SelectOres:SetValue(previousAutoBuildSettings.selectedOres)
+                    selectedOres = {}
+                    for oreName, _ in pairs(previousAutoBuildSettings.selectedOres) do
+                        table.insert(selectedOres, oreName)
+                    end
+                end
+                
+                if HasBeenTurnedOn1 == true and previousAutoBuildSettings and AutoMine.Value ~= previousAutoBuildSettings.autoMineEnabled then
+                    AutoMine:SetValue(previousAutoBuildSettings.autoMineEnabled)
+                end
+            end
+        end
+    })
+
+    -- Auto update resource status
+    task.spawn(function()
+        while true do
+            updateAutoBuildResourceStatus()
+            task.wait(5)
+        end
+    end)
+
+        SaveManager:SetLibrary(Library)
+        InterfaceManager:SetLibrary(Library)
+        SaveManager:IgnoreThemeSettings()
+        SaveManager:SetIgnoreIndexes{}
+        InterfaceManager:SetFolder("FluentScriptHub")
+        SaveManager:SetFolder("FluentScriptHub/RCU-mine") -- Set once for this script
+
+        InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+        SaveManager:BuildConfigSection(Tabs.Settings)
+
+        Window:SelectTab(1)
+        SaveManager:LoadAutoloadConfig()
+    end
+
+task.spawn(function()
+    if not game:IsLoaded() then game.Loaded:Wait() end
+
+    Knit = require(ReplicatedStorage.Packages.Knit)
+    Knit.OnStart():await()
+
+    ClickService = Knit.GetService("ClickService")
+    EggService = Knit.GetService("EggService")
+    RebirthService = Knit.GetService("RebirthService")
+    TreeService = Knit.GetService("TreeService")
+    AxeService = Knit.GetService("AxeService")
+    InventoryService = Knit.GetService("InventoryService")
+    PetService = Knit.GetService("PetService")
+    RewardService = Knit.GetService("RewardService")
+    ClanService = Knit.GetService("ClanService")
+    UpgradeService = Knit.GetService("UpgradeService")
+    SeasonService = Knit.GetService("SeasonService")
+    FarmService = Knit.GetService("FarmService")
+    AuraService = Knit.GetService("AuraService")
+    EventService = Knit.GetService("EventService")
+    OrbService = Knit.GetService("OrbService")
+    BuildingService = Knit.GetService("BuildingService")
+    LumberjackService = Knit.GetService("LumberjackService")
+    
+    DataController = Knit.GetController("DataController")
+    EggController = Knit.GetController("EggController")
+    TreeController = Knit.GetController("TreeController")
+    AuraController = Knit.GetController("AuraController")
+    MapController = Knit.GetController("MapController")
+    OrbController = Knit.GetController("OrbController")
+    ItemController = Knit.GetController("ItemController")
+    SoundController = Knit.GetController("SoundController")
+    FarmController = Knit.GetController("FarmController")
+    BuildingController = Knit.GetController("BuildingController")
+    HatchingController = require(LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Client"):WaitForChild("Controllers"):WaitForChild("HatchingController"))
+    
+    Functions = require(ReplicatedStorage.Shared.Functions)
+    seasonVariables = require(ReplicatedStorage.Shared.Variables)
+    seasonUtils = require(ReplicatedStorage.Shared.Util)
+    seasonTiersList = require(ReplicatedStorage.Shared.List[("Season%*"):format(seasonVariables.season)].Tiers)
+    Util = require(ReplicatedStorage.Shared.Util)
+    Values = require(ReplicatedStorage.Shared.Values)   
+
+    Window = Library:Window{
+        Title = "901 Mining Script",
+        SubTitle = "By Wia",
+        TabWidth = 160,
+        Size =  UDim2.fromOffset(580, 460),
+        Resize = false,
+        Theme = "Darker",
+        MinimizeKey = Enum.KeyCode.LeftShift
+    }
+
+    Tabs = {
+        Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
+        Mine = Window:AddTab({ Title = "Mine", Icon = "pickaxe" }),
+        Building = Window:AddTab({ Title = "Building", Icon = "hammer" }),
+    }
+
+    BuildUI()
+end)

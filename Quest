@@ -1,0 +1,2641 @@
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local CollectionService = game:GetService("CollectionService")
+
+-- Load Fluent Library
+local Library = loadstring(game:HttpGetAsync("https://github.com/ActualMasterOogway/Fluent-Renewed/releases/latest/download/Fluent.luau"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/bigbeanscripts/Pet-Warriors/refs/heads/main/test"))()
+local InterfaceManager = loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/InterfaceManager.luau"))()
+
+-- Services and Controllers
+local Knit = require(ReplicatedStorage.Packages.Knit.KnitClient)
+local SeasonService, EggService, RebirthService, TreeService, InventoryService, PetService, FarmService, AxeService, BuildingService, AuraService
+local DataController, TreeController
+
+-- Variables
+local Functions, Util, seasonVariables, seasonUtils
+
+-- Configuration
+local selectedAuraDice = {}
+local selectedQuests = {}
+local selectedQuestEgg = nil
+local selectedMythicalEternalEgg = nil
+
+DataController = Knit.GetController("DataController")
+TreeController = Knit.GetController("TreeController")
+RewardService = Knit.GetService("RewardService")
+
+-- Detect Highest Available Season
+local function getCurrentSeason()
+    local listFolder = ReplicatedStorage.Shared.List
+    local highest = 0
+
+    for _, obj in ipairs(listFolder:GetChildren()) do
+        if obj:IsA("Folder") or obj:IsA("ModuleScript") then
+            local num = tonumber(obj.Name:match("^Season(%d+)$"))
+            if num and num > highest then
+                highest = num
+            end
+        end
+    end
+
+    return highest
+end
+
+
+local function getLumberId()
+    local playerData = DataController:getData()
+    if playerData and playerData.inventory and playerData.inventory.exclusive then
+        for itemId, itemData in pairs(playerData.inventory.exclusive) do
+            local itemObj = Util.itemUtils.createItemFromData(itemData)
+            if itemObj and itemObj:getName():lower():find("axe") and not itemObj:getName():lower():find("pickaxe") then
+                return itemId
+            end
+        end
+    end
+    return nil
+end
+
+
+
+getActiveTreesInGroup = function(groupId, data)
+    local treesWithHealth = {}
+    local mapsFolder = Workspace:FindFirstChild("Game") and Workspace.Game:FindFirstChild("Maps")
+    if not mapsFolder then return treesWithHealth end
+
+    local mapName
+    for _, map in pairs(mapsFolder:GetChildren()) do
+        if map.Name:lower() == groupId:lower() then
+            mapName = map.Name
+            break
+        end
+    end
+
+    if not mapName then return treesWithHealth end
+    local treesFolder = mapsFolder[mapName]:FindFirstChild("Trees")
+    if not treesFolder then return treesWithHealth end
+
+    for _, tree in pairs(treesFolder:GetChildren()) do
+        local treeId = tree:GetAttribute("treeId")
+        local hasModel = tree:FindFirstChildWhichIsA("Model") ~= nil
+
+        if treeId and hasModel and 
+        data.trees[groupId] and data.trees[groupId][treeId] and 
+        data.trees[groupId][treeId].hp > 0 and 
+        not data.trees[groupId][treeId].respawn then
+
+            table.insert(treesWithHealth, {
+                treeId = treeId,
+                hp = data.trees[groupId][treeId].hp,
+                instance = tree,
+                groupId = groupId
+            })
+        end
+    end
+
+    table.sort(treesWithHealth, function(a, b) return a.hp < b.hp end)
+    return treesWithHealth
+end
+
+-- Get Best Eggs for Mythical/Eternal
+local function getBestEggs()
+    local Rep = game:GetService("ReplicatedStorage")
+    local EggData = require(Rep.Shared.List.Pets.Eggs)
+    local PetData = require(Rep.Shared.List.Pets.Pets)
+
+    local TARGET_RARITIES = {
+        Eternal = "Eternal",
+        Mythical = "Mythical"
+    }
+
+    local scores = {}
+
+    for eggName, eggInfo in pairs(EggData) do
+        local pets = eggInfo.pets
+        local score = { Eternal = 0, Mythical = 0 }
+
+        for petName, chance in pairs(pets) do
+            local petInfo = PetData[petName]
+            if petInfo and petInfo.rarity then
+                if petInfo.rarity == TARGET_RARITIES.Eternal then
+                    score.Eternal = score.Eternal + chance
+                elseif petInfo.rarity == TARGET_RARITIES.Mythical then
+                    score.Mythical = score.Mythical + chance
+                end
+            end
+        end
+
+        local combinedScore = score.Eternal + score.Mythical
+        if combinedScore > 0 then
+            table.insert(scores, { 
+                name = eggName, 
+                eternal = score.Eternal,
+                mythical = score.Mythical,
+                combined = combinedScore,
+                cost = eggInfo.cost or 0,
+                currency = eggInfo.currency or "clicks"
+            })
+        end
+    end
+
+    -- Sort by cost (lowest to highest)
+    table.sort(scores, function(a, b)
+        return a.cost < b.cost
+    end)
+
+    return scores
+end
+
+local function formatPercent(value)
+    -- Ensure value is a number
+    value = tonumber(value) or 0
+
+    -- Format with up to 6 decimal places
+    local formatted = string.format("%.6f", value)
+
+    -- Remove trailing zeros
+    formatted = formatted:gsub("0+$", "")
+
+    -- Remove decimal if it's an integer now
+    formatted = formatted:gsub("%.$", "")
+
+    return formatted .. "%"
+end
+
+
+-- Format number with suffixes (copied from RCU)
+local formatNumber = function(num)
+    local suffixes={{1e18,"Qi"},{1e21,"Sx"},{1e24,"Sp"},{1e27,"Oc"},{1e30,"No"},{1e33,"Dc"},{1e36,"Ud"},{1e39,"Dd"},{1e42,"Td"},{1e45,"Qd"},{1e48,"Qid"},{1e51,"Sxd"},{1e54,"Spd"},{1e57,"Ocd"},{1e60,"Nd"},{1e63,"Vg"}}
+    for i=#suffixes,1,-1 do local t,s=suffixes[i][1],suffixes[i][2] if num>=t then local v=num/t return string.format("%.2f%s",v,s):gsub("%.00","")end end
+    if num>=1e15 then local v=num/1e15 return string.format("%.2fQa",v):gsub("%.00","")elseif num>=1e12 then local v=num/1e12 return string.format("%.2fT",v):gsub("%.00","")elseif num>=1e9 then local v=num/1e9 return string.format("%.2fB",v):gsub("%.00","")elseif num>=1e6 then local v=num/1e6 return string.format("%.2fM",v):gsub("%.00","")elseif num>=1e3 then local v=num/1e3 return string.format("%.2fK",v):gsub("%.00","")else return tostring(math.floor(num))end
+end
+
+-- Build UI Function
+local function BuildUI()
+    -- Create Window
+    local Window = Library:Window{
+        Title = "Season Quests",
+        SubTitle = "By Wia",
+        TabWidth = 160,
+        Size = UDim2.fromOffset(580, 460),
+        Resize = false,
+        Theme = "Darker",
+        MinimizeKey = Enum.KeyCode.LeftShift
+    }
+
+    -- Create Tab
+    local Tabs = {
+        Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),    
+        Quests = Window:AddTab({ Title = "Season Quests", Icon = "phosphor-ticket-bold" }),
+    }
+
+    local SeasonQuestsSection = Tabs.Quests:AddSection("Season Quests")
+
+    -- Best Eggs Paragraph
+    local BestEggsParagraph = SeasonQuestsSection:Paragraph("BestEggs", {
+        Title = "Best Eggs for Mythical/Eternal",
+        Content = "Loading egg data...",
+        TitleAlignment = "Middle",
+        ContentAlignment = Enum.TextXAlignment.Left
+    })
+
+    -- Update best eggs display
+    local function updateBestEggsDisplay()
+        pcall(function()
+            local bestEggs = getBestEggs()
+            local statusLines = {}
+            
+            table.insert(statusLines, "\n Best Eggs for Mythical/Eternal Pets:\n Make sure you can afford the egg if you select it for a quest!")
+            table.insert(statusLines, "")
+            
+            for i = 1, math.min(5, #bestEggs) do
+                local egg = bestEggs[i]
+                table.insert(statusLines, string.format("%d. %s", i, egg.name))
+                table.insert(statusLines, string.format("   Mythical: %s | Eternal: %s", 
+                    formatPercent(egg.mythical), formatPercent(egg.eternal)))
+                table.insert(statusLines, string.format("   Cost: %s %s", 
+                    Functions.suffixes(egg.cost), egg.currency))
+                table.insert(statusLines, "")
+            end
+            
+            BestEggsParagraph:SetValue(table.concat(statusLines, "\n"))
+        end)
+    end
+
+    updateBestEggsDisplay()
+
+    -- Season Quest Status Paragraph
+    local SeasonQuestStatusParagraph = SeasonQuestsSection:Paragraph("SeasonQuestStatus", {
+        Title = "Season Quest Status",
+        Content = "Loading quest status...",
+        TitleAlignment = "Middle",
+        ContentAlignment = Enum.TextXAlignment.Left
+    })
+
+    -- Update status function
+    local function updateSeasonQuestStatus()
+        pcall(function()
+            local currentSeason = getCurrentSeason()
+            local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+
+            if not seasonObj then
+                SeasonQuestStatusParagraph:SetValue("❌ Could not find season object for Season" .. currentSeason)
+                return
+            end
+
+            if seasonObj:IsA("Folder") then
+                local preferred = seasonObj:FindFirstChild("Quests")
+                if preferred and preferred:IsA("ModuleScript") then
+                    seasonObj = preferred
+                else
+                    seasonObj = seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                end
+            end
+
+            if not seasonObj or not seasonObj:IsA("ModuleScript") then
+                SeasonQuestStatusParagraph:SetValue("❌ Season object is not a ModuleScript")
+                return
+            end
+
+            local SeasonModule = require(seasonObj)
+            local QuestsModule = SeasonModule.Quests or SeasonModule
+            
+            DataController:waitForData()
+            local playerData = DataController:getData()
+            
+            if not playerData then
+                SeasonQuestStatusParagraph:SetValue("❌ Could not get player data")
+                return
+            end
+            
+            local seasonKey = ("season%dQuests"):format(currentSeason)
+            local seasonQuestsData = playerData[seasonKey] or {}
+            local statusLines = {}
+            
+            table.insert(statusLines, string.format("📋 Season %d Quests:", currentSeason))
+            table.insert(statusLines, "")
+            
+            if not next(seasonQuestsData) then
+                table.insert(statusLines, "No active quests found!")
+            else
+                for slotIndex, questSlot in pairs(seasonQuestsData) do
+                    local difficulty = questSlot.questDifficulty or "unknown"
+                    local questId = questSlot.questId
+                    local progress = questSlot.progress or 0
+                    
+                    local questSet = QuestsModule[difficulty]
+                    local questInfo = questSet and questSet[questId]
+
+                    table.insert(statusLines, string.format("Slot %d [%s]:", slotIndex, string.upper(difficulty)))
+
+                    if questInfo then
+                        local questData = questInfo.quest
+                        local required = questData.amount or 0
+                        local isCompleted = progress >= required
+                        local status = isCompleted and "✅" or "❌"
+                        local percentage = required > 0 and math.floor((progress / required) * 100) or 0
+
+                        local questType = questData.quest or "N/A"
+                        local questName = questData.name or ""
+                        local displayName = questName ~= "" and string.format("%s (%s)", questType, questName) or questType
+
+                        table.insert(statusLines, string.format("%s %s", status, displayName))
+                        table.insert(statusLines, string.format("   Progress: %s/%s (%d%%)", 
+                            Functions.suffixes(progress),
+                            Functions.suffixes(required),
+                            percentage
+                        ))
+                        table.insert(statusLines, string.format("   Reward: %d", questInfo.reward or 0))
+                    else
+                        table.insert(statusLines, "   ⚠ Invalid quest: Missing module entry")
+                    end
+
+                    table.insert(statusLines, "")
+                end
+            end
+            
+            SeasonQuestStatusParagraph:SetValue(table.concat(statusLines, "\n"))
+        end)
+    end
+
+    -- Update status every 5 seconds
+    task.spawn(function()
+        while true do
+            updateSeasonQuestStatus()
+            task.wait(5)
+        end
+    end)
+
+    -- Get egg list (EXACT COPY from RCU)
+    local function getEggList()
+        local EggsModule = require(ReplicatedStorage.Shared.List.Pets.Eggs)
+        local EggUtils = require(ReplicatedStorage.Shared.Util.EggUtils)
+        
+        local eggsTable = {}
+        local displayToEggName = {}
+        
+        for eggName, eggData in pairs(EggsModule) do
+            if typeof(eggData) == "table" and eggData.cost then
+                table.insert(eggsTable, {name = eggName, cost = eggData.cost, currency = EggUtils.getCurrency(eggName) or "clicks"})
+            end
+        end
+        table.sort(eggsTable, function(a, b) return a.cost < b.cost end)
+
+        local eggOptions = {}
+        for _, eggInfo in ipairs(eggsTable) do
+            local displayName = eggInfo.name .. " - " .. formatNumber(eggInfo.cost) .. " " .. eggInfo.currency
+            table.insert(eggOptions, displayName)
+            displayToEggName[displayName] = eggInfo.name
+        end
+        
+        table.insert(eggOptions, "Best Egg (Clicks)")
+        
+        return eggOptions, displayToEggName
+    end
+
+    local eggOptions, displayToEggName = getEggList()
+
+    -- Get all available quests for dropdown
+    local function getAllQuests()
+        local questOptions = {}
+        local currentSeason = getCurrentSeason()
+        local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+
+        if seasonObj then
+            if seasonObj:IsA("Folder") then
+                local preferred = seasonObj:FindFirstChild("Quests")
+                if preferred and preferred:IsA("ModuleScript") then
+                    seasonObj = preferred
+                else
+                    seasonObj = seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                end
+            end
+
+            if seasonObj and seasonObj:IsA("ModuleScript") then
+                local SeasonModule = require(seasonObj)
+                local QuestsModule = SeasonModule.Quests or SeasonModule
+
+                for difficulty, questList in pairs(QuestsModule) do
+                    if type(questList) == "table" then
+                        for questId, questInfo in pairs(questList) do
+                            if questInfo and questInfo.quest then
+                                -- Get the raw quest type directly without any processing
+                                local questType = questInfo.quest.quest
+                                
+                                if questType then
+                                    table.insert(questOptions, string.format("[%s] %s", difficulty:upper(), questType))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        table.sort(questOptions)
+        return questOptions
+    end
+
+    local ConfigSection = Tabs.Quests:AddSection("Config")
+
+    -- Initialize egg variables at this scope level
+    selectedQuestEgg = displayToEggName[eggOptions[1]] or (eggOptions[1]:match("^(.-) %-") or eggOptions[1])
+    selectedMythicalEternalEgg = displayToEggName[eggOptions[1]] or (eggOptions[1]:match("^(.-) %-") or eggOptions[1])
+
+    -- Open Egg Quest Dropdown
+    ConfigSection:Dropdown("OpenEggQuest", {
+        Title = "Open Egg Quest",
+        Values = eggOptions,
+        Default = eggOptions[1],
+        Multi = false,
+        Searchable = true,
+        Callback = function(Value)
+            if Value == "Best Egg (Clicks)" then
+                local EggsModule = require(ReplicatedStorage.Shared.List.Pets.Eggs)
+                DataController:waitForData()
+                local playerData = DataController:getData()
+                local highestMap = 0
+                if playerData and playerData.maps then
+                    for mapNumber, _ in pairs(playerData.maps) do
+                        if tonumber(mapNumber) and tonumber(mapNumber) > highestMap then
+                            highestMap = tonumber(mapNumber)
+                        end
+                    end
+                end
+                local bestEggName = nil
+                for eggName, eggData in pairs(EggsModule) do
+                    if eggData.requiredMap == highestMap and (eggData.currency == "clicks" or not eggData.currency) then
+                        bestEggName = eggName
+                        break
+                    end
+                end
+                selectedQuestEgg = bestEggName
+            else
+                selectedQuestEgg = displayToEggName[Value] or (Value:match("^(.-) %-") or Value)
+            end
+        end
+    })
+
+    -- Open Egg Mythical/Eternal Dropdown
+    ConfigSection:Dropdown("OpenEggMythicalEternal", {
+        Title = "Open Egg Mythical/Eternal",
+        Values = eggOptions,
+        Default = eggOptions[1],
+        Multi = false,
+        Searchable = true,
+        Callback = function(Value)
+            if Value == "Best Egg (Clicks)" then
+                local EggsModule = require(ReplicatedStorage.Shared.List.Pets.Eggs)
+                DataController:waitForData()
+                local playerData = DataController:getData()
+                local highestMap = 0
+                if playerData and playerData.maps then
+                    for mapNumber, _ in pairs(playerData.maps) do
+                        if tonumber(mapNumber) and tonumber(mapNumber) > highestMap then
+                            highestMap = tonumber(mapNumber)
+                        end
+                    end
+                end
+                local bestEggName = nil
+                for eggName, eggData in pairs(EggsModule) do
+                    if eggData.requiredMap == highestMap and (eggData.currency == "clicks" or not eggData.currency) then
+                        bestEggName = eggName
+                        break
+                    end
+                end
+                selectedMythicalEternalEgg = bestEggName
+            else
+                selectedMythicalEternalEgg = displayToEggName[Value] or (Value:match("^(.-) %-") or Value)
+            end
+        end
+    })
+    -- Get aura dice list
+    local function getAuraDiceList()
+        local diceList = {}
+        local AuraDices = require(ReplicatedStorage.Shared.List.Items.AuraDices)
+        
+        for diceId, diceData in pairs(AuraDices) do
+            if diceData.name then
+                table.insert(diceList, diceData.name)
+            end
+        end
+        
+        table.sort(diceList)
+        return diceList
+    end
+
+    -- Select Aura Dice Dropdown
+    local auraDiceDropdown = ConfigSection:Dropdown("SelectAuraDice", {
+        Title = "Select Aura Dice",
+        Values = getAuraDiceList(),
+        Multi = true,
+        Searchable = true,
+        Default = {},
+        Callback = function(value)
+            selectedAuraDice = value
+        end
+    })
+
+    auraDiceDropdown:SetValue({["Aura Dice"] = true})
+
+    getAuraDiceList()
+
+    -- Complete Quests Section - Updated with Auto Complete Logic
+    local CompleteQuestsSection = Tabs.Quests:AddSection("Complete Quests")
+
+
+    -- Select Quests Dropdown
+    local questOptions = getAllQuests()
+    local SelectQuestsDropdown = CompleteQuestsSection:Dropdown("SelectQuests", {
+        Title = "Select Quests",
+        Values = questOptions,
+        Multi = true,
+        Searchable = true,
+        Default = {},
+        Callback = function(value)
+            selectedQuests = {}
+            for questName, isSelected in pairs(value) do
+                if isSelected then
+                    -- Extract just the quest type from "[DIFFICULTY] questType"
+                    local questType = questName:match("%] (.+)$")
+                    if questType then
+                        table.insert(selectedQuests, questType)
+                    end
+                end
+            end
+        end
+    })
+
+    -- Select All Quests Button
+    CompleteQuestsSection:Button({
+        Title = "Select All Quests",
+        Callback = function()
+            local allSelected = {}
+            for _, questName in ipairs(questOptions) do
+                allSelected[questName] = true
+            end
+            SelectQuestsDropdown:SetValue(allSelected)
+        end
+    })
+
+CompleteQuestsSection:Paragraph("MainScriptWarning", {
+    Title = "Important!",
+    Content = [[
+Auto Fish, Auto Cut Trees, Auto Mining, and Auto Hatch must be turned OFF in the main script for this to work properly.
+If any of these are enabled, the script won't work properly... ALSO set auto rejoin to 20 minutes (1200 seconds) if you want the best results with the claim playtime rewards stuff.]]})
+
+    -- Auto Complete Season Quests Toggle
+    local seasonQuestEnabled = false
+    local questCompletionThread = nil
+
+    local CompleteQuests = CompleteQuestsSection:Toggle("AutoCompleteSeasonQuests", {
+        Title = "Auto Complete Quests",
+        Default = false,
+        Callback = function(enabled)
+            seasonQuestEnabled = enabled
+            
+            if questCompletionThread then
+                task.cancel(questCompletionThread)
+                questCompletionThread = nil
+            end
+            
+            if enabled then
+                questCompletionThread = task.spawn(function()
+                    while seasonQuestEnabled do
+                        local nextCheckTime = tick() + 5
+                        
+                        pcall(function()
+                            -- Get current active season quests
+                            local currentSeason = getCurrentSeason()
+                            local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+                            
+                            if not seasonObj then
+                                return
+                            end
+
+                            if seasonObj:IsA("Folder") then
+                                local preferred = seasonObj:FindFirstChild("Quests")
+                                if preferred and preferred:IsA("ModuleScript") then
+                                    seasonObj = preferred
+                                else
+                                    seasonObj = seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                                end
+                            end
+
+                            if not seasonObj or not seasonObj:IsA("ModuleScript") then
+                                return
+                            end
+
+                            local SeasonModule = require(seasonObj)
+                            local QuestsModule = SeasonModule.Quests or SeasonModule
+                            
+                            DataController:waitForData()
+                            local playerData = DataController:getData()
+                            
+                            if not playerData then
+                                return
+                            end
+                            
+                            local seasonKey = ("season%dQuests"):format(currentSeason)
+                            local seasonQuestsData = playerData[seasonKey] or {}
+                            
+                            -- Build a map of active quests
+                            local activeQuests = {}
+                            for slotIndex, questSlot in pairs(seasonQuestsData) do
+                                local difficulty = questSlot.questDifficulty or "unknown"
+                                local questId = questSlot.questId
+                                local progress = questSlot.progress or 0
+                                
+                                local questSet = QuestsModule[difficulty]
+                                local questInfo = questSet and questSet[questId]
+                                
+                                if questInfo then
+                                    local questData = questInfo.quest
+                                    local questType = questData.quest
+                                    local required = questData.amount or 0
+                                    local isCompleted = progress >= required
+                                    
+                                    activeQuests[questType] = {
+                                        slotIndex = slotIndex,
+                                        difficulty = difficulty,
+                                        progress = progress,
+                                        required = required,
+                                        isCompleted = isCompleted
+                                    }
+                                end
+                            end
+                            
+                            -- Only proceed if we have selected quests
+                            if #selectedQuests == 0 then
+                                return
+                            end
+                            
+                            -- Filter selected quests that are still active and incomplete
+                            local questsToProcess = {}
+                            for _, questType in ipairs(selectedQuests) do
+                                local activeQuest = activeQuests[questType]
+                                if activeQuest and not activeQuest.isCompleted then
+                                    table.insert(questsToProcess, {type = questType, data = activeQuest})
+                                end
+                            end
+                            
+                            if #questsToProcess == 0 then
+                                return
+                            end
+                            
+                            
+                            local eggQuest = nil
+                            local mythicalEternalQuest = nil
+                            local meteorQuest = nil
+                            local treeQuest = nil
+                            local fishQuest = nil
+                            local oreQuest = nil
+                            local otherQuests = {}
+
+                            for _, quest in ipairs(questsToProcess) do
+                                if quest.type == "hatchMythicalPet" or quest.type == "hatchEternalPet" then
+                                    mythicalEternalQuest = quest
+                                    eggQuest = nil -- Stop normal hatching if mythical/eternal quest is active
+                                elseif quest.type == "openAnyEgg" or quest.type == "hatchEpicPet" or quest.type == "hatchLegendaryPet" then
+                                    if not mythicalEternalQuest then
+                                        eggQuest = quest
+                                    end
+                                elseif quest.type == "destroyMeteor" then
+                                    meteorQuest = quest
+                                elseif quest.type == "destroyTree" or quest.type == "destroyAnyTree" then
+                                    treeQuest = quest
+                                elseif quest.type:find("catchFish") or quest.type == "catchAnyFish" or quest.type == "catchFishRarity" then
+                                    fishQuest = quest
+                                elseif quest.type:find("destroyOre") or quest.type == "destroyAnyOre" then
+                                    oreQuest = quest
+                                else
+                                    table.insert(otherQuests, quest)
+                                end
+                            end
+
+                            local threads = {}
+
+                            if eggQuest and _G.CurrentResourceQuest ~= "tree" then
+                                local quest = eggQuest
+                                table.insert(threads, task.spawn(function()
+                                    while tick() < nextCheckTime and seasonQuestEnabled do
+                                        Knit.GetService("EggService").openEgg._re:FireServer(selectedQuestEgg, 999)
+                                        task.wait(_G.SmartHatchDelay or 2.1)
+                                    end
+                                end))
+                            end
+
+                            if mythicalEternalQuest and _G.CurrentResourceQuest ~= "tree" then
+                                local quest = mythicalEternalQuest
+                                table.insert(threads, task.spawn(function()
+                                    while tick() < nextCheckTime and seasonQuestEnabled do
+                                        Knit.GetService("EggService").openEgg._re:FireServer(selectedMythicalEternalEgg, 999)
+                                        task.wait(_G.SmartHatchDelay or 2.1)
+                                    end
+                                end))
+                            end
+                                                        
+                            -- Meteor breaking thread (can run alongside other quests)
+                            if meteorQuest then
+                                table.insert(threads, task.spawn(function()
+                                    local CollectionService = game:GetService("CollectionService")
+                                    local EventService = Knit.GetService("EventService")
+                                    
+                                    while tick() < nextCheckTime and seasonQuestEnabled do
+                                        local allMeteors = CollectionService:GetTagged("Meteor")
+                                        if #allMeteors > 0 then
+                                            for _, meteor in ipairs(allMeteors) do
+                                                if meteor and meteor:IsDescendantOf(workspace) then
+                                                    local meteorId = meteor:GetAttribute("meteorId")
+                                                    if meteorId then
+                                                        EventService = Knit.GetService("EventService")
+                                                        EventService.damageMeteor._re:FireServer(meteorId)
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        task.wait(3)
+                                    end
+                                end))
+                            end
+                            
+                        if not _G.CurrentResourceQuest then
+                            if treeQuest and fishQuest and oreQuest then
+                                local choice = math.random(1, 3)
+                                if choice == 1 then
+                                    _G.CurrentResourceQuest = "tree"
+                                elseif choice == 2 then
+                                    _G.CurrentResourceQuest = "fish"
+                                else
+                                    _G.CurrentResourceQuest = "ore"
+                                end
+                            elseif treeQuest and fishQuest then
+                                _G.CurrentResourceQuest = math.random(1, 2) == 1 and "tree" or "fish"
+                            elseif treeQuest and oreQuest then
+                                _G.CurrentResourceQuest = math.random(1, 2) == 1 and "tree" or "ore"
+                            elseif fishQuest and oreQuest then
+                                _G.CurrentResourceQuest = math.random(1, 2) == 1 and "fish" or "ore"
+                            elseif treeQuest then
+                                _G.CurrentResourceQuest = "tree"
+                            elseif fishQuest then
+                                _G.CurrentResourceQuest = "fish"
+                            elseif oreQuest then
+                                _G.CurrentResourceQuest = "ore"
+                            end
+                        end
+
+                        -- Check if current quest is still active, if not, reset
+                        if _G.CurrentResourceQuest == "tree" and not treeQuest then
+                            _G.CurrentResourceQuest = nil
+                        elseif _G.CurrentResourceQuest == "fish" and not fishQuest then
+                            _G.CurrentResourceQuest = nil
+                        elseif _G.CurrentResourceQuest == "ore" and not oreQuest then
+                            _G.CurrentResourceQuest = nil
+                        end
+
+
+
+                        if _G.CurrentResourceQuest == "tree" and treeQuest then
+                            table.insert(threads, task.spawn(function()
+                                local treesToCut = {"spawn", "desert", "nuclear"}
+                                while seasonQuestEnabled and _G.CurrentResourceQuest == "tree" do
+                                    pcall(function()
+                                        -- Equip axe if not equipped
+                                        local playerData = DataController:getData()
+                                        
+                                        if not playerData.isAxeEquipped then
+                                            local axeInventoryIndex = nil
+                                            for inventoryIndex, itemData in pairs(playerData.inventory.exclusive) do
+                                                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                local itemName = itemObj:getName()
+                                                -- Check if it's an axe (has "axe" but not "pickaxe")
+                                                if itemName:lower():find("axe") and not itemName:lower():find("pickaxe") then
+                                                    axeInventoryIndex = inventoryIndex
+                                                    break
+                                                end
+                                            end
+                                            
+                                            if axeInventoryIndex then
+                                                -- Unequip currently equipped item first
+                                                local currentEquippedIndex = nil
+                                                
+                                                if playerData.isFishingRodEquipped then
+                                                    for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                                        local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                        local itemName = itemObj:getName()
+                                                        if itemName:lower():find("fishingrod") or itemName:lower():find("rod") then
+                                                            currentEquippedIndex = itemId
+                                                            break
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                if playerData.isPickaxeEquipped and not currentEquippedIndex then
+                                                    for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                                        local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                        local itemName = itemObj:getName()
+                                                        if itemName:lower():find("pickaxe") then
+                                                            currentEquippedIndex = itemId
+                                                            break
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                if currentEquippedIndex then
+                                                    InventoryService:useItem(currentEquippedIndex, {use=1})
+                                                    task.wait(1)
+                                                end
+                                                
+                                                -- Equip the axe
+                                                InventoryService:useItem(axeInventoryIndex, {use=1})
+                                                task.wait(1)
+                                            end
+                                        end
+
+                                        -- Get player position
+                                        local playerPosition = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position
+                                        if not playerPosition then return end
+
+                                        -- Get latest data
+                                        local data = DataController:getData()
+                                        if not data or not data.trees then return end
+
+                                        -- Find weakest tree (lowest HP)
+                                        local lowestHP = math.huge
+                                        local targetTreeInstance = nil
+                                        local targetGroup = nil
+                                        local targetId = nil
+                                        for _, groupId in ipairs(treesToCut) do
+                                            if data.trees[groupId] then
+                                                local activeTrees = getActiveTreesInGroup(groupId, data)
+                                                for _, treeInfo in ipairs(activeTrees) do
+                                                    if treeInfo.hp > 0 and treeInfo.hp < lowestHP then
+                                                        lowestHP = treeInfo.hp
+                                                        targetTreeInstance = treeInfo.instance
+                                                        targetGroup = groupId
+                                                        targetId = treeInfo.treeId
+                                                    end
+                                                end
+                                            end
+                                        end
+
+                                        -- Teleport to weakest tree
+                                        if targetTreeInstance then
+                                            local model = targetTreeInstance:FindFirstChildWhichIsA("Model")
+                                            if model and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                                                LocalPlayer.Character.HumanoidRootPart.CFrame = model:GetPivot() + Vector3.new(2, 1, 0)
+                                                task.wait(1)
+                                                playerPosition = LocalPlayer.Character.HumanoidRootPart.Position
+                                            end
+                                        end
+
+                                        -- Find closest tree after teleport
+                                        local closestTree, closestDistance = nil, math.huge
+                                        for _, groupId in ipairs(treesToCut) do
+                                            if data.trees[groupId] then
+                                                for _, tree in pairs(CollectionService:GetTagged("Tree")) do
+                                                    local model = tree:FindFirstChildWhichIsA("Model")
+                                                    if not model then continue end
+                                                    local treeGroupId = tree:GetAttribute("groupId")
+                                                    local treeId = tree:GetAttribute("treeId")
+                                                    if treeGroupId == groupId and treeId and data.trees[groupId][treeId] and data.trees[groupId][treeId].hp > 0 and not data.trees[groupId][treeId].respawn then
+                                                        local primaryPart = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+                                                        if primaryPart then
+                                                            local distance = (primaryPart.Position - playerPosition).Magnitude
+                                                            if distance < closestDistance then
+                                                                closestDistance = distance
+                                                                closestTree = tree
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+
+                                        -- Raycast and damage closest tree
+                                        if closestTree then
+                                            pcall(function()
+                                                local originalGetRay = TreeController.getRay
+                                                TreeController.getRay = function(self, _, _) return true end
+                                                local originalGetTreeFromRayResult = TreeController.getTreeFromRayResult
+                                                TreeController.getTreeFromRayResult = function(_, _) return closestTree end
+                                                TreeController:sendRayFromInput(0, 0)
+                                                TreeController.getRay = originalGetRay
+                                                TreeController.getTreeFromRayResult = originalGetTreeFromRayResult
+                                            end)
+                                            -- Damage tree
+                                            local treeGroupId = closestTree:GetAttribute("groupId")
+                                            local treeId = closestTree:GetAttribute("treeId")
+                                            local lumberId = getLumberId()
+                                            if treeGroupId and treeId and lumberId then
+                                                TreeService.damage2:Fire(treeGroupId, treeId, lumberId)
+                                            end
+                                        end
+                                    end)
+                                    task.wait(1)
+                                end
+                            end))
+
+
+                        elseif _G.CurrentResourceQuest == "fish" and fishQuest then
+                            table.insert(threads, task.spawn(function()
+                                -- Fish quest code
+                                pcall(function()
+                                    local playerData = DataController:getData()
+                                    
+                                    local rodInventoryId = nil
+                                    for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                        local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                        local itemName = itemObj:getName()
+                                        
+                                        -- Check if it's a fishing rod
+                                        if itemName:lower():find("fishingrod") or itemName:lower():find("rod") then
+                                            rodInventoryId = itemId
+                                            break
+                                        end
+                                    end
+                                    
+                                    if not rodInventoryId then return end
+                                    
+                                    if not playerData.isFishingRodEquipped then
+                                        local currentEquippedIndex = nil
+                                        
+                                        if playerData.isAxeEquipped then
+                                            for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                local itemName = itemObj:getName()
+                                                if itemName:lower():find("axe") and not itemName:lower():find("pickaxe") then
+                                                    currentEquippedIndex = itemId
+                                                    break
+                                                end
+                                            end
+                                        end
+                                        
+                                        if playerData.isPickaxeEquipped and not currentEquippedIndex then
+                                            for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                local itemName = itemObj:getName()
+                                                if itemName:lower():find("pickaxe") then
+                                                    currentEquippedIndex = itemId
+                                                    break
+                                                end
+                                            end
+                                        end
+                                        
+                                        if currentEquippedIndex then
+                                            InventoryService:useItem(currentEquippedIndex, {use=1})
+                                            task.wait(1)
+                                        end
+                                        
+                                        -- Equip the rod
+                                        InventoryService:useItem(rodInventoryId, {use=1})
+                                        task.wait(1)
+                                    end
+                                end)
+                                
+                                while tick() < nextCheckTime and seasonQuestEnabled do
+                                    pcall(function()
+                                        local FishingService = Knit.GetService("FishingService")
+                                        FishingService.fishRequest._re:FireServer()
+                                    end)
+                                    task.wait(0.15)
+                                    
+                                    pcall(function()
+                                        local FishingService = Knit.GetService("FishingService")
+                                        FishingService.fishCatched._re:FireServer()
+                                    end)
+                                    task.wait(0.15)
+                                end
+                            end))
+
+                            elseif _G.CurrentResourceQuest == "ore" and oreQuest then
+                                table.insert(threads, task.spawn(function()
+                                    -- Equip pickaxe
+                                    pcall(function()
+                                        local playerData = DataController:getData()
+                                        
+                                        local pickaxeInventoryIndex = nil
+                                        for inventoryIndex, itemData in pairs(playerData.inventory.exclusive) do
+                                            local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                            local itemName = itemObj:getName()
+                                            
+                                            -- Check if it's a pickaxe
+                                            if itemName:lower():find("pickaxe") then
+                                                pickaxeInventoryIndex = inventoryIndex
+                                                break
+                                            end
+                                        end
+                                        
+                                        if not pickaxeInventoryIndex then return end
+                                        
+                                        if not playerData.isPickaxeEquipped then
+                                            local currentEquippedIndex = nil
+                                            
+                                            if playerData.isFishingRodEquipped then
+                                                for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                                    local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                    local itemName = itemObj:getName()
+                                                    if itemName:lower():find("fishingrod") or itemName:lower():find("rod") then
+                                                        currentEquippedIndex = itemId
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                            
+                                            if playerData.isAxeEquipped and not currentEquippedIndex then
+                                                for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                                    local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                    local itemName = itemObj:getName()
+                                                    if itemName:lower():find("axe") and not itemName:lower():find("pickaxe") then
+                                                        currentEquippedIndex = itemId
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                            
+                                            if currentEquippedIndex then
+                                                InventoryService:useItem(currentEquippedIndex, {use=1})
+                                                task.wait(1)
+                                            end
+                                            
+                                            -- Equip the pickaxe
+                                            InventoryService:useItem(pickaxeInventoryIndex, {use=1})
+                                            task.wait(1)
+                                        end
+                                    end)
+
+                                    -- Teleport to mine every 20 seconds in a separate thread
+                                    table.insert(threads, task.spawn(function()
+                                        while seasonQuestEnabled and _G.CurrentResourceQuest == "ore" do
+                                            pcall(function()
+                                                local Maps = require(ReplicatedStorage.Shared.List.Maps)
+                                                local targetMachine = "Space Mine"
+                                                for mapId, mapData in pairs(Maps) do
+                                                    if mapData.machines then
+                                                        for _, machine in pairs(mapData.machines) do
+                                                            if machine.name == targetMachine and machine.teleport then
+                                                                local canTeleport = true
+                                                                if machine.canTeleport then
+                                                                    local playerData = DataController:getData()
+                                                                    canTeleport = machine.canTeleport(playerData)
+                                                                end
+                                                                if canTeleport then
+                                                                    local character = LocalPlayer.Character
+                                                                    if character and character:FindFirstChild("HumanoidRootPart") then
+                                                                        LocalPlayer:RequestStreamAroundAsync(machine.teleport.p, 5)
+                                                                        task.wait(0.5)
+                                                                        character.HumanoidRootPart:PivotTo(machine.teleport)
+                                                                        task.wait(1)
+                                                                    end
+                                                                end
+                                                                return
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                            end)
+                                            task.wait(20)
+                                        end
+                                    end))
+
+                                    local Ores = require(ReplicatedStorage.Shared.List.Mine.Ores)
+                                    local OreRooms = require(ReplicatedStorage.Shared.List.Mine.OreRooms)
+                                    local ExclusiveItems = require(ReplicatedStorage.Shared.List.Items.Exclusive)
+                                    local OreService = Knit.GetService("OreService")
+
+                                    local function getPickaxeDamage()
+                                        local data = DataController:getData()
+                                        if data and data.inventory and data.inventory.exclusive then
+                                            for _, itemData in pairs(data.inventory.exclusive) do
+                                                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                                local itemName = itemObj:getName()
+                                                if itemName:lower():find("pickaxe") then
+                                                    local pickaxeData = ExclusiveItems[itemName]
+                                                    if pickaxeData and pickaxeData.multiplier then
+                                                        local baseDamage = pickaxeData.multiplier
+                                                        local playerMultiplier = data.pickaxeDamageMultiplier or 0
+                                                        return baseDamage + playerMultiplier
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        return 10
+                                    end
+
+                                    local function findBestRoomForOre(oreId, pickaxeDamage)
+                                        local bestRoom = nil
+                                        local bestChance = 0
+                                        local maxHitsAllowed = 75
+                                        local maxUnbeatable20Percent = 20
+                                        for roomName, roomData in pairs(OreRooms) do
+                                            if roomData.ores and roomData.ores[oreId] then
+                                                local oreChance = roomData.ores[oreId]
+                                                local totalChance = 0
+                                                local unbeatableChance = 0
+                                                for roomOreId, chance in pairs(roomData.ores) do
+                                                    totalChance = totalChance + chance
+                                                    local roomOreData = Ores[roomOreId]
+                                                    if roomOreData and roomOreData.hp then
+                                                        local hitsNeeded = math.ceil(roomOreData.hp / pickaxeDamage)
+                                                        if hitsNeeded > maxHitsAllowed then
+                                                            unbeatableChance = unbeatableChance + chance
+                                                        end
+                                                    end
+                                                end
+                                                local unbeatablePercent = (unbeatableChance / totalChance) * 100
+                                                if unbeatablePercent <= maxUnbeatable20Percent and oreChance > bestChance then
+                                                    bestChance = oreChance
+                                                    bestRoom = roomName
+                                                end
+                                            end
+                                        end
+                                        return bestRoom
+                                    end
+
+                                    local pickaxeDamage = getPickaxeDamage()
+                                    local targetOreId = nil
+                                    local matchAnyOre = false
+
+                                    if oreQuest.type == "destroyOre" or oreQuest.type:find("destroyOre") then
+                                        local currentSeason = getCurrentSeason()
+                                        local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+                                        if seasonObj then
+                                            if seasonObj:IsA("Folder") then
+                                                local preferred = seasonObj:FindFirstChild("Quests")
+                                                seasonObj = preferred and preferred:IsA("ModuleScript") and preferred or seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                                            end
+                                            if seasonObj and seasonObj:IsA("ModuleScript") then
+                                                local SeasonModule = require(seasonObj)
+                                                local QuestsModule = SeasonModule.Quests or SeasonModule
+                                                local playerData = DataController:getData()
+                                                local seasonKey = ("season%dQuests"):format(currentSeason)
+                                                local seasonQuestsData = playerData[seasonKey] or {}
+                                                for _, questSlot in pairs(seasonQuestsData) do
+                                                    local questSet = QuestsModule[questSlot.questDifficulty]
+                                                    local questInfo = questSet and questSet[questSlot.questId]
+                                                    if questInfo and (questInfo.quest.quest == "destroyOre" or questInfo.quest.quest:find("destroyOre")) then
+                                                        targetOreId = questInfo.quest.name
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                        end
+
+                                    elseif oreQuest.type == "destroyAnyOre" then
+                                        matchAnyOre = true
+                                    end
+
+                                    while tick() < nextCheckTime and seasonQuestEnabled do
+                                        local playerData = DataController:getData()
+                                        if not playerData or not playerData.ores then
+                                            task.wait(0.25)
+                                            continue
+                                        end
+
+                                        if matchAnyOre then
+                                            -- destroyAnyOre: Mine the lowest HP beatable ore every second
+                                            local lowestHP = math.huge
+                                            local targetOre = nil
+                                            local targetRoomId, targetId = nil, nil
+                                            for _, ore in CollectionService:GetTagged("Ore") do
+                                                local roomId = ore:GetAttribute("roomId")
+                                                local id = ore:GetAttribute("id")
+                                                if roomId and id and playerData.ores[roomId] and playerData.ores[roomId][id] then
+                                                    local info = playerData.ores[roomId][id]
+                                                    local oreData = Ores[info.oreId]
+                                                    if oreData then
+                                                        local hitsNeeded = math.ceil(oreData.hp / pickaxeDamage)
+                                                        local remaining = oreData.hp - (info.damage or 0)
+                                                        if hitsNeeded <= 75 and remaining > 0 and remaining < lowestHP then
+                                                            lowestHP = remaining
+                                                            targetOre = ore
+                                                            targetRoomId = roomId
+                                                            targetId = id
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                            if targetOre and targetRoomId and targetId then
+                                                pcall(function()
+                                                    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                                    local orePart = targetOre.PrimaryPart or targetOre:FindFirstChildWhichIsA("BasePart")
+                                                    if hrp and orePart then
+                                                        hrp.CFrame = orePart.CFrame + Vector3.new(0, 3, 0)
+                                                    end
+                                                end)
+                                                OreService.damage._re:FireServer(targetRoomId, targetId)
+                                            end
+                                            task.wait(0.25)
+                                        else
+                                            -- destroyOre: Mine the target ore, fallback to best room if none available
+                                            local foundTargetOre = false
+                                            local targetRoomId, targetId, targetOre = nil, nil, nil
+                                            for _, ore in CollectionService:GetTagged("Ore") do
+                                                local roomId = ore:GetAttribute("roomId")
+                                                local id = ore:GetAttribute("id")
+                                                if roomId and id and playerData.ores[roomId] and playerData.ores[roomId][id] then
+                                                    local info = playerData.ores[roomId][id]
+                                                    local oreData = Ores[info.oreId]
+                                                    if oreData and info.oreId == targetOreId then
+                                                        local hitsNeeded = math.ceil(oreData.hp / pickaxeDamage)
+                                                        local remaining = oreData.hp - (info.damage or 0)
+                                                        if hitsNeeded <= 75 and remaining > 0 then
+                                                            foundTargetOre = true
+                                                            targetRoomId = roomId
+                                                            targetId = id
+                                                            targetOre = ore
+                                                            break
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                            if foundTargetOre and targetRoomId and targetId then
+                                                pcall(function()
+                                                    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                                    local orePart = targetOre.PrimaryPart or targetOre:FindFirstChildWhichIsA("BasePart")
+                                                    if hrp and orePart then
+                                                        hrp.CFrame = orePart.CFrame + Vector3.new(0, 3, 0)
+                                                    end
+                                                end)
+                                                OreService.damage._re:FireServer(targetRoomId, targetId)
+                                                task.wait(0.25)
+                                            else
+                                                -- Fallback: go to best room for target ore, mine weakest beatable ore in that room
+                                                local bestRoom = findBestRoomForOre(targetOreId, pickaxeDamage)
+                                                local weakestOre, weakestHP, fallbackRoomId, fallbackId = nil, math.huge, nil, nil
+                                                for _, ore in CollectionService:GetTagged("Ore") do
+                                                    local roomId = ore:GetAttribute("roomId")
+                                                    local id = ore:GetAttribute("id")
+                                                    if roomId == bestRoom and id and playerData.ores[roomId] and playerData.ores[roomId][id] then
+                                                        local info = playerData.ores[roomId][id]
+                                                        local oreData = Ores[info.oreId]
+                                                        if oreData then
+                                                            local hitsNeeded = math.ceil(oreData.hp / pickaxeDamage)
+                                                            local remaining = oreData.hp - (info.damage or 0)
+                                                            if hitsNeeded <= 75 and remaining > 0 and remaining < weakestHP then
+                                                                weakestHP = remaining
+                                                                weakestOre = ore
+                                                                fallbackRoomId = roomId
+                                                                fallbackId = id
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                                if weakestOre and fallbackRoomId and fallbackId then
+                                                    pcall(function()
+                                                        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                                        local orePart = weakestOre.PrimaryPart or weakestOre:FindFirstChildWhichIsA("BasePart")
+                                                        if hrp and orePart then
+                                                            hrp.CFrame = orePart.CFrame + Vector3.new(0, 3, 0)
+                                                        end
+                                                    end)
+                                                    OreService.damage._re:FireServer(fallbackRoomId, fallbackId)
+                                                end
+                                                task.wait(0.25)
+                                            end
+                                        end
+                                    end
+                                end))
+                            end
+
+                            -- Other quests threads
+                            for _, quest in ipairs(otherQuests) do
+                                local questType = quest.type
+                                local questData = quest.data
+                                
+                                if questType == "usePotions" then
+                                    table.insert(threads, task.spawn(function()
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            local playerData = DataController:getData()
+                                            if playerData and playerData.inventory and playerData.inventory.potion then
+                                                local bestPotion = nil
+                                                local highestAmount = 0
+                                                
+                                                for itemId, itemData in pairs(playerData.inventory.potion) do
+                                                    if itemData.am and itemData.am > highestAmount then
+                                                        highestAmount = itemData.am
+                                                        bestPotion = itemId
+                                                    end
+                                                end
+                                                
+                                                if bestPotion then
+                                                    local remaining = questData.required - questData.progress
+                                                    local amountToUse = math.min(remaining, playerData.inventory.potion[bestPotion].am)
+                                                    InventoryService:useItem(bestPotion, {use = amountToUse})
+                                                    task.wait(5)
+                                                else
+                                                    break
+                                                end
+                                            else
+                                                break
+                                            end
+                                        end
+                                    end))
+
+                                elseif questType == "craftSmoothie" then
+                                    table.insert(threads, task.spawn(function()
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                local Smoothies = require(ReplicatedStorage.Shared.List.Items.Smoothies)
+                                                DataController:waitForData()
+                                                local playerData = DataController:getData()
+                                                if not playerData or not playerData.inventory then
+                                                    return
+                                                end
+
+                                                -- Get all resources by name and amount
+                                                local resourceAmounts = {}
+                                                for category, items in pairs(playerData.inventory) do
+                                                    if type(items) == "table" then
+                                                        for itemId, itemData in pairs(items) do
+                                                            local name = itemData.nm or itemData.name or tostring(itemId)
+                                                            local amount = itemData.am or itemData.amount or 0
+                                                            resourceAmounts[name] = (resourceAmounts[name] or 0) + amount
+                                                        end
+                                                    end
+                                                end
+
+                                                local bestSmoothie, maxCraftable = nil, 0
+                                                for smoothieId, smoothieData in pairs(Smoothies) do
+                                                    local smoothieName = smoothieData.name or tostring(smoothieId)
+                                                    local canCraft = math.huge
+                                                    local missing = {}
+                                                    if smoothieData.required then
+                                                        for _, requiredItem in ipairs(smoothieData.required) do
+                                                            local itemName = requiredItem.nm or (requiredItem.getName and requiredItem:getName()) or requiredItem.name or "Unknown"
+                                                            local requiredAmount = requiredItem.am or (requiredItem.getAmount and requiredItem:getAmount()) or requiredItem.amount or 0
+                                                            local currentAmount = resourceAmounts[itemName] or 0
+                                                            local possibleCrafts = requiredAmount > 0 and math.floor(currentAmount / requiredAmount) or 0
+                                                            canCraft = math.min(canCraft, possibleCrafts)
+                                                            if currentAmount < requiredAmount then
+                                                                table.insert(missing, string.format("%s (%d more)", itemName, requiredAmount - currentAmount))
+                                                            end
+                                                        end
+                                                    end
+                                                    if #missing > 0 then
+                                                    else
+                                                    end
+                                                    -- Only consider for crafting if not Chaos/Insane
+                                                    if canCraft > maxCraftable and smoothieName ~= "Chaos Smoothie" and smoothieName ~= "Insane Smoothie" then
+                                                        maxCraftable = canCraft
+                                                        bestSmoothie = smoothieId
+                                                    end
+                                                end
+
+                                                if bestSmoothie and maxCraftable > 0 then
+                                                    local amountToCraft = math.min(maxCraftable, questData.required - questData.progress)
+                                                    Knit.GetService("RewardService"):craftSmoothie(bestSmoothie, amountToCraft)
+                                                    task.wait(5)
+                                                else
+                                                end
+                                            end)
+                                            task.wait(3)
+                                        end
+                                    end))
+
+                                elseif questType == "craftUltraPotions" then
+                                    table.insert(threads, task.spawn(function()
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                local MagicPot = require(ReplicatedStorage.Shared.List.MagicPot)
+                                                DataController:waitForData()
+                                                local playerData = DataController:getData()
+                                                
+                                                if not playerData or not playerData.inventory then
+                                                    return
+                                                end
+                                                
+                                                -- Get current progress
+                                                local currentSeason = getCurrentSeason()
+                                                local seasonKey = ("season%dQuests"):format(currentSeason)
+                                                local seasonQuestsData = playerData[seasonKey] or {}
+                                                local currentProgress = questData.progress
+                                                
+                                                for _, questSlot in pairs(seasonQuestsData) do
+                                                    local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+                                                    if seasonObj then
+                                                        if seasonObj:IsA("Folder") then
+                                                            local preferred = seasonObj:FindFirstChild("Quests")
+                                                            seasonObj = preferred and preferred:IsA("ModuleScript") and preferred or seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                                                        end
+                                                        if seasonObj and seasonObj:IsA("ModuleScript") then
+                                                            local SeasonModule = require(seasonObj)
+                                                            local QuestsModule = SeasonModule.Quests or SeasonModule
+                                                            local questSet = QuestsModule[questSlot.questDifficulty]
+                                                            local questInfo = questSet and questSet[questSlot.questId]
+                                                            if questInfo and questInfo.quest.quest == "craftUltraPotions" then
+                                                                currentProgress = questSlot.progress or 0
+                                                                break
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                local remaining = questData.required - currentProgress
+                                                if remaining <= 0 then 
+                                                    return 
+                                                end
+                                                
+                                                -- Find ultra potion we can craft the most of
+                                                local bestPotionIndex = nil
+                                                local maxCraftable = 0
+                                                
+                                                for index = 10, 12 do
+                                                    local potionData = MagicPot[index]
+                                                    if potionData and potionData.required then
+                                                        local canCraft = math.huge
+                                                        -- Check all requirements
+                                                        for _, requiredItem in ipairs(potionData.required) do
+                                                            local itemName = requiredItem:getName()
+                                                            local requiredAmount = requiredItem:getAmount()
+                                                            local currentItem = Util.itemUtils.getItemFromName(playerData, itemName)
+                                                            local currentAmount = currentItem and currentItem:getAmount() or 0
+                                                            local possibleCrafts = math.floor(currentAmount / requiredAmount)
+                                                            canCraft = math.min(canCraft, possibleCrafts)
+                                                        end
+                                                        if canCraft > maxCraftable then
+                                                            maxCraftable = canCraft
+                                                            bestPotionIndex = index
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                if bestPotionIndex and maxCraftable > 0 then
+                                                    local amountToCraft = math.min(maxCraftable, remaining)
+                                                    local potionName = MagicPot[bestPotionIndex].item:getName()
+                                                    Knit.GetService("RewardService"):magicPot(bestPotionIndex, amountToCraft)
+                                                    task.wait(1)
+                                                else
+                                                end
+                                            end)
+                                            task.wait(5.25)
+                                        end
+                                    end))
+
+                                elseif questType == "useMegaPotions" then
+                                    table.insert(threads, task.spawn(function()
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            local playerData = DataController:getData()
+                                            if playerData and playerData.inventory and playerData.inventory.potion then
+                                                local bestPotionId, bestPotionName, bestAmount = nil, nil, 0
+                                                for potionId, potionData in pairs(playerData.inventory.potion) do
+                                                    local name = potionData.nm or tostring(potionId)
+                                                    local amount = potionData.am or 0
+                                                    if name:lower():find("mega") and amount > bestAmount then
+                                                        bestPotionId = potionId
+                                                        bestPotionName = name
+                                                        bestAmount = amount
+                                                    end
+                                                end
+                                                if bestPotionId then
+                                                    local remaining = questData.required - questData.progress
+                                                    local amountToUse = math.min(remaining, bestAmount)
+                                                    InventoryService:useItem(bestPotionId, {use = amountToUse})
+                                                    task.wait(5)
+                                                else
+                                                    break
+                                                end
+                                            else
+                                                break
+                                            end
+                                        end
+                                    end))
+                                    
+                                elseif questType == "craftMegaPotions" then
+                                    table.insert(threads, task.spawn(function()
+                                        
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                local MagicPot = require(ReplicatedStorage.Shared.List.MagicPot)
+                                                DataController:waitForData()
+                                                local playerData = DataController:getData()
+                                                
+                                                if not playerData or not playerData.inventory then return end
+                                                
+                                                -- Get current progress
+                                                local currentSeason = getCurrentSeason()
+                                                local seasonKey = ("season%dQuests"):format(currentSeason)
+                                                local seasonQuestsData = playerData[seasonKey] or {}
+                                                local currentProgress = questData.progress
+                                                
+                                                for _, questSlot in pairs(seasonQuestsData) do
+                                                    local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+                                                    if seasonObj then
+                                                        if seasonObj:IsA("Folder") then
+                                                            local preferred = seasonObj:FindFirstChild("Quests")
+                                                            seasonObj = preferred and preferred:IsA("ModuleScript") and preferred or seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                                                        end
+                                                        if seasonObj and seasonObj:IsA("ModuleScript") then
+                                                            local SeasonModule = require(seasonObj)
+                                                            local QuestsModule = SeasonModule.Quests or SeasonModule
+                                                            local questSet = QuestsModule[questSlot.questDifficulty]
+                                                            local questInfo = questSet and questSet[questSlot.questId]
+                                                            if questInfo and questInfo.quest.quest == "craftMegaPotions" then
+                                                                currentProgress = questSlot.progress or 0
+                                                                break
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                local remaining = questData.required - currentProgress
+                                                
+                                                if remaining <= 0 then 
+                                                    return 
+                                                end
+                                                
+                                                -- Find mega potion we can craft the most of
+                                                local bestPotionIndex = nil
+                                                local maxCraftable = 0
+                                                
+                                                for index = 4, 9 do
+                                                    local potionData = MagicPot[index]
+                                                    if potionData and potionData.required then
+                                                        local canCraft = math.huge
+                                                        
+                                                        for _, requiredItem in ipairs(potionData.required) do
+                                                            local itemName = requiredItem:getName()
+                                                            local requiredAmount = requiredItem:getAmount()
+                                                            
+                                                            local currentItem = Util.itemUtils.getItemFromName(playerData, itemName)
+                                                            local currentAmount = currentItem and currentItem:getAmount() or 0
+                                                            
+                                                            local possibleCrafts = math.floor(currentAmount / requiredAmount)
+                                                            canCraft = math.min(canCraft, possibleCrafts)
+                                                        end
+                                                        
+                                                        if canCraft > maxCraftable then
+                                                            maxCraftable = canCraft
+                                                            bestPotionIndex = index
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                if bestPotionIndex and maxCraftable > 0 then
+                                                    local amountToCraft = math.min(maxCraftable, remaining)
+                                                    local potionName = MagicPot[bestPotionIndex].item:getName()
+                                                    
+                                                    local RewardService = Knit.GetService("RewardService")
+                                                    RewardService:magicPot(bestPotionIndex, amountToCraft)
+                                                    task.wait(1)
+                                                else
+                                                end
+                                            end)
+                                            
+                                            task.wait(5.25)
+                                        end
+                                    end))
+
+                                elseif questType == "useAuraDice" then
+                                    table.insert(threads, task.spawn(function()
+                                        if selectedAuraDice and next(selectedAuraDice) then
+                                            local AuraDices = require(ReplicatedStorage.Shared.List.Items.AuraDices)
+                                            while tick() < nextCheckTime and seasonQuestEnabled do
+                                                for diceName, isSelected in pairs(selectedAuraDice) do
+                                                    if isSelected then
+                                                        for diceId, diceData in pairs(AuraDices) do
+                                                            if diceData.name == diceName then
+                                                                AuraService:roll(diceId)
+                                                                task.wait(0.5)
+                                                                break
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                                task.wait(0.5)
+                                            end
+                                        end
+                                    end))
+                                            
+                                elseif questType == "collectPlaytimeRewards" then
+                                    table.insert(threads, task.spawn(function()
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            local Holder = LocalPlayer.PlayerGui.MainUI.Menus.RewardsFrame.Main.Displays.Playtime.Holder
+                                            local success, err = pcall(function()
+                                                for _, rewardFrame in ipairs(Holder:GetChildren()) do
+                                                    if rewardFrame:IsA("Frame") then
+                                                        local rewardId = tonumber(rewardFrame.Name)
+                                                        local timerLabel = rewardFrame:FindFirstChild("Main", true) and rewardFrame.Main:FindFirstChild("Timer")
+                                                        if timerLabel and timerLabel.Text == "Claim" then
+                                                            RewardService:claimPlaytimeReward(rewardId)
+                                                            task.wait(1)
+                                                        end
+                                                    end
+                                                end
+                                            end)
+                                            if not success then
+                                            end
+                                            task.wait(10)
+                                        end
+                                    end))
+                                elseif questType == "ancientSpin" then
+                                    table.insert(threads, task.spawn(function()
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            local RewardService = Knit.GetService("RewardService")
+                                            RewardService:ancientWheelSpin()
+                                            task.wait(2)
+                                        end
+                                    end))
+                                    
+                                elseif questType == "useGoldenFruit" or questType == "useFruit" then
+                                    table.insert(threads, task.spawn(function()
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            local playerData = DataController:getData()
+                                            if playerData and playerData.inventory and playerData.inventory.fruit then
+                                                local foundFruit = false
+                                                for fruitId, fruitData in pairs(playerData.inventory.fruit) do
+                                                    if questType == "useGoldenFruit" then
+                                                        if fruitData.nm and fruitData.nm:lower():find("golden") and fruitData.am > 0 then
+                                                            local remaining = questData.required - questData.progress
+                                                            local amountToUse = math.min(remaining, fruitData.am)
+                                                            InventoryService:useItem(fruitId, {use = amountToUse})
+                                                            task.wait(5)
+                                                            foundFruit = true
+                                                            break
+                                                        end
+                                                    else
+                                                        if fruitData.am > 0 then
+                                                            local remaining = questData.required - questData.progress
+                                                            local amountToUse = math.min(remaining, fruitData.am)
+                                                            InventoryService:useItem(fruitId, {use = amountToUse})
+                                                            task.wait(5)
+                                                            foundFruit = true
+                                                            break
+                                                        end
+                                                    end
+                                                end
+                                                if not foundFruit then break end
+                                            else
+                                                break
+                                            end
+                                        end
+                                    end))
+                                    
+                                elseif questType == "useCircusTickets" then
+                                    table.insert(threads, task.spawn(function()
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                local RewardService = Knit.GetService("RewardService")
+                                                RewardService:playCircusMinigame(10, "normal")
+                                            end)
+                                            task.wait(2.75)
+                                        end
+                                    end))
+
+                                elseif questType == "openMeteoriteFragment" then
+                                    table.insert(threads, task.spawn(function()
+                                        
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                DataController:waitForData()
+                                                local playerData = DataController:getData()
+                                                
+                                                if not playerData or not playerData.inventory or not playerData.inventory.mapItem then 
+                                                    return 
+                                                end
+                                                
+                                                -- Get current quest progress
+                                                local currentSeason = getCurrentSeason()
+                                                local seasonKey = ("season%dQuests"):format(currentSeason)
+                                                local seasonQuestsData = playerData[seasonKey] or {}
+                                                local currentProgress = questData.progress
+                                                
+                                                for _, questSlot in pairs(seasonQuestsData) do
+                                                    local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+                                                    if seasonObj then
+                                                        if seasonObj:IsA("Folder") then
+                                                            local preferred = seasonObj:FindFirstChild("Quests")
+                                                            seasonObj = preferred and preferred:IsA("ModuleScript") and preferred or seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                                                        end
+                                                        if seasonObj and seasonObj:IsA("ModuleScript") then
+                                                            local SeasonModule = require(seasonObj)
+                                                            local QuestsModule = SeasonModule.Quests or SeasonModule
+                                                            local questSet = QuestsModule[questSlot.questDifficulty]
+                                                            local questInfo = questSet and questSet[questSlot.questId]
+                                                            if questInfo and questInfo.quest.quest == questType then
+                                                                currentProgress = questSlot.progress or 0
+                                                                break
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                local remaining = questData.required - currentProgress
+                                                
+                                                if remaining <= 0 then 
+                                                    return 
+                                                end
+                                                
+                                                -- Find meteorite fragment with highest amount by checking player inventory
+                                                local LunarForgeList = require(ReplicatedStorage.Shared.List.LunarForge)
+                                                local bestFragmentForgeId = nil
+                                                local bestAmount = 0
+                                                local bestFragmentName = nil
+                                                
+                                                -- Iterate through player's mapItem inventory
+                                                for itemId, itemData in pairs(playerData.inventory.mapItem) do
+                                                    local playerItem = Util.itemUtils.createItemFromData(itemData)
+                                                    if playerItem then
+                                                        local playerItemName = playerItem:getRealName() or playerItem:getName()
+                                                        local amount = playerItem:getAmount() or 0
+                                                        
+                                                        -- Check if this item exists in LunarForge list
+                                                        for forgeId, forgeData in pairs(LunarForgeList) do
+                                                            local forgeItem = forgeData.item
+                                                            local forgeItemName = forgeItem:getRealName() or forgeItem:getName()
+                                                            
+                                                            if playerItemName == forgeItemName and amount > bestAmount then
+                                                                bestAmount = amount
+                                                                bestFragmentForgeId = forgeId
+                                                                bestFragmentName = playerItemName
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                if bestFragmentForgeId and bestAmount > 0 then
+                                                    local amountToOpen = math.min(remaining, bestAmount)
+                                                    
+                                                    -- Fire RewardService with numeric forgeId
+                                                    local RewardService = Knit.GetService("RewardService")
+                                                    RewardService:lunarForge(bestFragmentForgeId, amountToOpen)
+                                                else
+                                                    
+                                                    -- Debug: List all mapItems
+                                                    for itemId, itemData in pairs(playerData.inventory.mapItem) do
+                                                        local playerItem = Util.itemUtils.createItemFromData(itemData)
+                                                        if playerItem then
+                                                        end
+                                                    end
+                                                end
+                                            end)
+                                            
+                                            task.wait(5)
+                                        end
+                                    end))
+
+                                 elseif questType == "playDungeons" then
+                                    table.insert(threads, task.spawn(function()
+                                        local DungeonService = Knit.GetService("DungeonService")
+                                        
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                -- Fire dungeon start with gamemode 1 (1 ticket)
+                                                DungeonService:startDungeon(1)
+                                            end)
+                                            task.wait(3) -- Wait 3 seconds before next attempt
+                                        end
+                                    end))
+
+                                elseif questType == "buyDungeonShop" then
+                                    table.insert(threads, task.spawn(function()
+                                        local DungeonService = Knit.GetService("DungeonService")
+                                        
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                -- Buy first 3 shop slots
+                                                for slot = 1, 3 do
+                                                    DungeonService:buyShop(slot)
+                                                    task.wait(0.5) -- Small delay between purchases
+                                                end
+                                            end)
+                                            task.wait(5) -- Check every 5 seconds
+                                        end
+                                    end))
+
+                                elseif questType == "craftGolden" then
+                                    table.insert(threads, task.spawn(function()
+                                        
+                                        -- Get target rarity
+                                        local targetRarity = nil
+                                        local currentSeason = getCurrentSeason()
+                                        local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+                                        if seasonObj then
+                                            if seasonObj:IsA("Folder") then
+                                                local preferred = seasonObj:FindFirstChild("Quests")
+                                                seasonObj = preferred and preferred:IsA("ModuleScript") and preferred or seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                                            end
+                                            if seasonObj and seasonObj:IsA("ModuleScript") then
+                                                local SeasonModule = require(seasonObj)
+                                                local QuestsModule = SeasonModule.Quests or SeasonModule
+                                                local playerData = DataController:getData()
+                                                local seasonKey = ("season%dQuests"):format(currentSeason)
+                                                local seasonQuestsData = playerData[seasonKey] or {}
+                                                
+                                                for _, questSlot in pairs(seasonQuestsData) do
+                                                    local questSet = QuestsModule[questSlot.questDifficulty]
+                                                    local questInfo = questSet and questSet[questSlot.questId]
+                                                    if questInfo and questInfo.quest.quest == "craftGolden" then
+                                                        targetRarity = questInfo.quest.name
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        
+                                        
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                local playerData = DataController:getData()
+                                                if not playerData or not playerData.inventory or not playerData.inventory.pet then return end
+                                                
+                                                local remaining = questData.required - questData.progress
+                                                if remaining <= 0 then return end
+                                                
+                                                local PetDefinitions = require(ReplicatedStorage.Shared.List.Pets.Pets)
+                                                
+                                                -- Find best single pet ID that can make goldens
+                                                local bestPetId = nil
+                                                local bestPetName = nil
+                                                local bestScore = 0
+                                                local bestRarity = nil
+                                                
+                                                for petId, petRawData in pairs(playerData.inventory.pet) do
+                                                    local petObject = Util.itemUtils.createItemFromData(petRawData)
+                                                    if petObject and (petRawData.am or 0) > 0 then
+                                                        local petName = petObject:getName()
+                                                        local tierNum = petObject:getTier()
+                                                        local petDef = PetDefinitions[petName]
+                                                        local rarity = petDef and petDef.rarity or "Unknown"
+                                                        
+                                                        if tierNum == 1 and (not targetRarity or rarity == targetRarity) then
+                                                            local canMake = math.floor(petRawData.am / 5)
+                                                            
+                                                            if canMake > bestScore then
+                                                                bestScore = canMake
+                                                                bestPetId = petId
+                                                                bestPetName = petName
+                                                                bestRarity = rarity
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                
+                                                if bestPetId and bestScore > 0 then
+                                                    local petData = playerData.inventory.pet[bestPetId]
+                                                    local toCraft = math.min(bestScore, remaining)
+                                                    local normalsUsed = toCraft * 5
+                                                    local normalsLeft = petData.am - normalsUsed
+                                                    
+                                                    
+                                                    PetService:craft({[1] = bestPetId}, false, toCraft)
+                                                    task.wait(1)
+                                                    
+                                                else
+                                                    if not eggQuest and not mythicalEternalQuest then
+                                                        local eggToUse = (targetRarity == "Mythical" or targetRarity == "Eternal") and selectedMythicalEternalEgg or selectedQuestEgg
+                                                        -- Hatch continuously until next check instead of just once
+                                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                                            Knit.GetService("EggService").openEgg._re:FireServer(eggToUse, 999)
+                                                            task.wait(_G.SmartHatchDelay or 2.1)
+                                                        end
+                                                    end
+                                                end
+                                            end)
+                                            task.wait(2)
+                                        end
+                                    end))
+                                    
+                                elseif questType == "craftToxic" then
+                                    table.insert(threads, task.spawn(function()
+                                        local targetRarity = nil
+                                        local currentSeason = getCurrentSeason()
+                                        local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+                                        if seasonObj then
+                                            if seasonObj:IsA("Folder") then
+                                                local preferred = seasonObj:FindFirstChild("Quests")
+                                                seasonObj = preferred and preferred:IsA("ModuleScript") and preferred or seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                                            end
+                                            if seasonObj and seasonObj:IsA("ModuleScript") then
+                                                local SeasonModule = require(seasonObj)
+                                                local QuestsModule = SeasonModule.Quests or SeasonModule
+                                                local playerData = DataController:getData()
+                                                local seasonKey = ("season%dQuests"):format(currentSeason)
+                                                local seasonQuestsData = playerData[seasonKey] or {}
+
+                                                for _, questSlot in pairs(seasonQuestsData) do
+                                                    local questSet = QuestsModule[questSlot.questDifficulty]
+                                                    local questInfo = questSet and questSet[questSlot.questId]
+                                                    if questInfo and questInfo.quest.quest == "craftToxic" then
+                                                        targetRarity = questInfo.quest.name
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                        end
+
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                local playerData = DataController:getData()
+                                                if not playerData or not playerData.inventory or not playerData.inventory.pet then return end
+
+                                                local remaining = questData.required - questData.progress
+                                                if remaining <= 0 then return end
+
+                                                local PetDefinitions = require(ReplicatedStorage.Shared.List.Pets.Pets)
+
+                                                -- Chain crafting logic
+                                                local petsByName = {}
+                                                for petId, petRawData in pairs(playerData.inventory.pet) do
+                                                    local petObject = Util.itemUtils.createItemFromData(petRawData)
+                                                    if petObject and (petRawData.am or 0) > 0 then
+                                                        local petName = petObject:getName()
+                                                        local tierNum = petObject:getTier()
+                                                        local petDef = PetDefinitions[petName]
+                                                        local rarity = petDef and petDef.rarity or "Unknown"
+                                                        if not targetRarity or rarity == targetRarity then
+                                                            petsByName[petName] = petsByName[petName] or {normal = 0, golden = 0, normalIds = {}, goldenIds = {}}
+                                                            if tierNum == 1 then
+                                                                petsByName[petName].normal = petsByName[petName].normal + (petRawData.am or 0)
+                                                                table.insert(petsByName[petName].normalIds, {id = petId, count = petRawData.am or 0})
+                                                            elseif tierNum == 2 then
+                                                                petsByName[petName].golden = petsByName[petName].golden + (petRawData.am or 0)
+                                                                table.insert(petsByName[petName].goldenIds, {id = petId, count = petRawData.am or 0})
+                                                            end
+                                                        end
+                                                    end
+                                                end
+
+                                                -- Find which pet can make the most toxics
+                                                local bestPet = nil
+                                                local bestScore = 0
+                                                for petName, counts in pairs(petsByName) do
+                                                    local goldenCount = counts.golden or 0
+                                                    local normalCount = counts.normal or 0
+                                                    local totalGoldens = goldenCount + math.floor(normalCount / 5)
+                                                    local toxicsCanMake = math.floor(totalGoldens / 5)
+                                                    if toxicsCanMake > bestScore then
+                                                        bestScore = toxicsCanMake
+                                                        bestPet = petName
+                                                    end
+                                                end
+
+                                                if bestPet and bestScore > 0 then
+                                                    local data = petsByName[bestPet]
+                                                    local toCraft = math.min(bestScore, remaining)
+
+                                                    -- Step 1: Craft normals to goldens if needed
+                                                    local goldensNeeded = toCraft * 5
+                                                    local goldenCount = data.golden or 0
+                                                    local normalCount = data.normal or 0
+
+                                                    if goldenCount < goldensNeeded then
+                                                        local goldensToMake = goldensNeeded - goldenCount
+                                                        local normalsNeeded = goldensToMake * 5
+                                                        if normalCount >= normalsNeeded then
+                                                            for _, normalData in ipairs(data.normalIds) do
+                                                                if goldensToMake <= 0 then break end
+                                                                local canMakeFromThis = math.floor(normalData.count / 5)
+                                                                local toMake = math.min(canMakeFromThis, goldensToMake)
+                                                                if toMake > 0 then
+                                                                    PetService:craft({[1] = normalData.id}, false, toMake)
+                                                                    goldensToMake = goldensToMake - toMake
+                                                                    task.wait(1)
+                                                                end
+                                                            end
+                                                            playerData = DataController:getData()
+                                                        else
+                                                            local canMakeGoldens = math.floor(normalCount / 5)
+                                                            if canMakeGoldens > 0 then
+                                                                for _, normalData in ipairs(data.normalIds) do
+                                                                    if canMakeGoldens <= 0 then break end
+                                                                    local canMakeFromThis = math.floor(normalData.count / 5)
+                                                                    local toMake = math.min(canMakeFromThis, canMakeGoldens)
+                                                                    if toMake > 0 then
+                                                                        PetService:craft({[1] = normalData.id}, false, toMake)
+                                                                        canMakeGoldens = canMakeGoldens - toMake
+                                                                        task.wait(1)
+                                                                    end
+                                                                end
+                                                                playerData = DataController:getData()
+                                                            end
+                                                        end
+                                                    end
+
+                                                    -- Step 2: Craft goldens to toxics
+                                                    playerData = DataController:getData()
+                                                    local toxicsCrafted = 0
+                                                    for _, goldenData in ipairs(data.goldenIds) do
+                                                        if toxicsCrafted >= toCraft then break end
+                                                        local canMakeFromThis = math.floor(goldenData.count / 5)
+                                                        local toMake = math.min(canMakeFromThis, toCraft - toxicsCrafted)
+                                                        if toMake > 0 then
+                                                            PetService:craft({[1] = goldenData.id}, false, toMake)
+                                                            toxicsCrafted = toxicsCrafted + toMake
+                                                            task.wait(1)
+                                                        end
+                                                    end
+                                                else
+                                                    if not eggQuest and not mythicalEternalQuest then
+                                                        local eggToUse = (targetRarity == "Mythical" or targetRarity == "Eternal") and selectedMythicalEternalEgg or selectedQuestEgg
+                                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                                            Knit.GetService("EggService").openEgg._re:FireServer(eggToUse, 999)
+                                                            task.wait(_G.SmartHatchDelay or 2.1)
+                                                        end
+                                                    end
+                                                end
+                                            end)
+                                            task.wait(2)
+                                        end
+                                    end))
+
+                                elseif questType == "craftGalaxy" then
+                                    table.insert(threads, task.spawn(function()
+                                        local targetRarity = nil
+                                        local currentSeason = getCurrentSeason()
+                                        local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+                                        if seasonObj then
+                                            if seasonObj:IsA("Folder") then
+                                                local preferred = seasonObj:FindFirstChild("Quests")
+                                                seasonObj = preferred and preferred:IsA("ModuleScript") and preferred or seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                                            end
+                                            if seasonObj and seasonObj:IsA("ModuleScript") then
+                                                local SeasonModule = require(seasonObj)
+                                                local QuestsModule = SeasonModule.Quests or SeasonModule
+                                                local playerData = DataController:getData()
+                                                local seasonKey = ("season%dQuests"):format(currentSeason)
+                                                local seasonQuestsData = playerData[seasonKey] or {}
+
+                                                for _, questSlot in pairs(seasonQuestsData) do
+                                                    local questSet = QuestsModule[questSlot.questDifficulty]
+                                                    local questInfo = questSet and questSet[questSlot.questId]
+                                                    if questInfo and questInfo.quest.quest == "craftGalaxy" then
+                                                        targetRarity = questInfo.quest.name
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                        end
+
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                local playerData = DataController:getData()
+                                                if not playerData or not playerData.inventory or not playerData.inventory.pet then
+                                                    return
+                                                end
+
+                                                local remaining = questData.required - questData.progress
+                                                if remaining <= 0 then return end
+
+                                                local PetDefinitions = require(ReplicatedStorage.Shared.List.Pets.Pets)
+
+                                                -- Find best pet by name and rarity
+                                                local petsByName = {}
+                                                for petId, petRawData in pairs(playerData.inventory.pet) do
+                                                    local petObject = Util.itemUtils.createItemFromData(petRawData)
+                                                    if petObject and (petRawData.am or 0) > 0 then
+                                                        local petName = petObject:getName()
+                                                        local tierNum = petObject:getTier()
+                                                        local petDef = PetDefinitions[petName]
+                                                        local rarity = petDef and petDef.rarity or "Unknown"
+                                                        if not targetRarity or rarity == targetRarity then
+                                                            petsByName[petName] = petsByName[petName] or {normal = 0, golden = 0, toxic = 0, normalIds = {}, goldenIds = {}, toxicIds = {}}
+                                                            if tierNum == 1 then
+                                                                petsByName[petName].normal = petsByName[petName].normal + (petRawData.am or 0)
+                                                                table.insert(petsByName[petName].normalIds, {id = petId, count = petRawData.am or 0})
+                                                            elseif tierNum == 2 then
+                                                                petsByName[petName].golden = petsByName[petName].golden + (petRawData.am or 0)
+                                                                table.insert(petsByName[petName].goldenIds, {id = petId, count = petRawData.am or 0})
+                                                            elseif tierNum == 3 then
+                                                                petsByName[petName].toxic = petsByName[petName].toxic + (petRawData.am or 0)
+                                                                table.insert(petsByName[petName].toxicIds, {id = petId, count = petRawData.am or 0})
+                                                            end
+                                                        end
+                                                    end
+                                                end
+
+                                                -- Find which pet can make the most galaxies
+                                                local bestPet = nil
+                                                local bestScore = 0
+                                                for petName, counts in pairs(petsByName) do
+                                                    local toxicCount = counts.toxic or 0
+                                                    local goldenCount = counts.golden or 0
+                                                    local normalCount = counts.normal or 0
+                                                    local totalGoldens = goldenCount + math.floor(normalCount / 5)
+                                                    local totalToxics = toxicCount + math.floor(totalGoldens / 5)
+                                                    local galaxiesCanMake = math.floor(totalToxics / 5)
+                                                    if galaxiesCanMake > bestScore then
+                                                        bestScore = galaxiesCanMake
+                                                        bestPet = petName
+                                                    end
+                                                end
+
+                                                if bestPet and bestScore > 0 then
+                                                    local data = petsByName[bestPet]
+                                                    local toCraft = math.min(bestScore, remaining)
+
+                                                    -- Step 1: Craft normals to goldens if needed
+                                                    local toxicsNeeded = toCraft * 5
+                                                    local goldensNeeded = toxicsNeeded * 5
+                                                    local goldenCount = data.golden or 0
+                                                    local normalCount = data.normal or 0
+
+                                                    if goldenCount < goldensNeeded then
+                                                        local goldensToMake = goldensNeeded - goldenCount
+                                                        local normalsNeeded = goldensToMake * 5
+                                                        if normalCount >= normalsNeeded then
+                                                            for _, normalData in ipairs(data.normalIds) do
+                                                                if goldensToMake <= 0 then break end
+                                                                local canMakeFromThis = math.floor(normalData.count / 5)
+                                                                local toMake = math.min(canMakeFromThis, goldensToMake)
+                                                                if toMake > 0 then
+                                                                    PetService:craft({[1] = normalData.id}, false, toMake)
+                                                                    goldensToMake = goldensToMake - toMake
+                                                                    task.wait(1)
+                                                                end
+                                                            end
+                                                            playerData = DataController:getData()
+                                                        else
+                                                            local canMakeGoldens = math.floor(normalCount / 5)
+                                                            if canMakeGoldens > 0 then
+                                                                for _, normalData in ipairs(data.normalIds) do
+                                                                    if canMakeGoldens <= 0 then break end
+                                                                    local canMakeFromThis = math.floor(normalData.count / 5)
+                                                                    local toMake = math.min(canMakeFromThis, canMakeGoldens)
+                                                                    if toMake > 0 then
+                                                                        PetService:craft({[1] = normalData.id}, false, toMake)
+                                                                        canMakeGoldens = canMakeGoldens - toMake
+                                                                        task.wait(1)
+                                                                    end
+                                                                end
+                                                                playerData = DataController:getData()
+                                                            end
+                                                        end
+                                                    end
+
+                                                    -- Step 2: Craft goldens to toxics if needed
+                                                    playerData = DataController:getData()
+                                                    local toxicsToMake = toxicsNeeded - (data.toxic or 0)
+                                                    local goldenCount = data.golden or 0
+                                                    if toxicsToMake > 0 and goldenCount > 0 then
+                                                        for _, goldenData in ipairs(data.goldenIds) do
+                                                            if toxicsToMake <= 0 then break end
+                                                            local canMakeFromThis = math.floor(goldenData.count / 5)
+                                                            local toMake = math.min(canMakeFromThis, toxicsToMake)
+                                                            if toMake > 0 then
+                                                                PetService:craft({[1] = goldenData.id}, false, toMake)
+                                                                toxicsToMake = toxicsToMake - toMake
+                                                                task.wait(1)
+                                                            end
+                                                        end
+                                                        playerData = DataController:getData()
+                                                    end
+
+                                                    -- Step 3: Craft toxics to galaxies
+                                                    playerData = DataController:getData()
+                                                    local galaxiesCrafted = 0
+                                                    for _, toxicData in ipairs(data.toxicIds) do
+                                                        if galaxiesCrafted >= toCraft then break end
+                                                        local canMakeFromThis = math.floor(toxicData.count / 5)
+                                                        local toMake = math.min(canMakeFromThis, toCraft - galaxiesCrafted)
+                                                        if toMake > 0 then
+                                                            PetService:craft({[1] = toxicData.id}, false, toMake)
+                                                            galaxiesCrafted = galaxiesCrafted + toMake
+                                                            task.wait(1)
+                                                        end
+                                                    end
+                                                else
+                                                    if not eggQuest and not mythicalEternalQuest then
+                                                        local eggToUse = (targetRarity == "Mythical" or targetRarity == "Eternal") and selectedMythicalEternalEgg or selectedQuestEgg
+                                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                                            Knit.GetService("EggService").openEgg._re:FireServer(eggToUse, 999)
+                                                            task.wait(_G.SmartHatchDelay or 2.1)
+                                                        end
+                                                    end
+                                                end
+                                            end)
+                                            task.wait(2)
+                                        end
+                                    end))
+
+
+                                elseif questType == "craftAnyGoldenPets" then
+                                table.insert(threads, task.spawn(function()
+                                    
+                                    while tick() < nextCheckTime and seasonQuestEnabled do
+                                        pcall(function()
+                                            local playerData = DataController:getData()
+                                            if not playerData or not playerData.inventory or not playerData.inventory.pet then return end
+                                            
+                                            local remaining = questData.required - questData.progress
+                                            if remaining <= 0 then return end
+                                            
+                                            -- Find best single pet ID that can make goldens
+                                            local bestPetId = nil
+                                            local bestPetName = nil
+                                            local bestScore = 0
+                                            
+                                            for petId, petRawData in pairs(playerData.inventory.pet) do
+                                                local petObject = Util.itemUtils.createItemFromData(petRawData)
+                                                if petObject and (petRawData.am or 0) > 0 then
+                                                    local petName = petObject:getName()
+                                                    local tierNum = petObject:getTier()
+                                                    
+                                                    if tierNum == 1 then
+                                                        local canMake = math.floor(petRawData.am / 5)
+                                                        
+                                                        if canMake > bestScore then
+                                                            bestScore = canMake
+                                                            bestPetId = petId
+                                                            bestPetName = petName
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                            
+                                            
+                                            if bestPetId and bestScore > 0 then
+                                                local petData = playerData.inventory.pet[bestPetId]
+                                                local toCraft = math.min(bestScore, remaining)
+                                                local normalsUsed = toCraft * 5
+                                                local normalsLeft = petData.am - normalsUsed
+                                                
+                                                
+                                                PetService:craft({[1] = bestPetId}, false, toCraft)
+                                                task.wait(1)
+                                                
+                                            else
+                                            end
+                                        end)
+                                        task.wait(2)
+                                    end
+                                end))
+                                
+
+                                elseif questType == "craftAnyToxicPets" then
+                                    table.insert(threads, task.spawn(function()
+                                        
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                -- Refresh player data each cycle
+                                                DataController:waitForData()
+                                                local playerData = DataController:getData()
+                                                if not playerData or not playerData.inventory or not playerData.inventory.pet then return end
+                                                
+                                                -- Refresh quest progress
+                                                local currentSeason = getCurrentSeason()
+                                                local seasonKey = ("season%dQuests"):format(currentSeason)
+                                                local seasonQuestsData = playerData[seasonKey] or {}
+                                                local currentProgress = questData.progress
+                                                
+                                                for _, questSlot in pairs(seasonQuestsData) do
+                                                    local seasonObj = ReplicatedStorage.Shared.List:FindFirstChild(("Season%d"):format(currentSeason))
+                                                    if seasonObj then
+                                                        if seasonObj:IsA("Folder") then
+                                                            local preferred = seasonObj:FindFirstChild("Quests")
+                                                            seasonObj = preferred and preferred:IsA("ModuleScript") and preferred or seasonObj:FindFirstChildWhichIsA("ModuleScript")
+                                                        end
+                                                        if seasonObj and seasonObj:IsA("ModuleScript") then
+                                                            local SeasonModule = require(seasonObj)
+                                                            local QuestsModule = SeasonModule.Quests or SeasonModule
+                                                            local questSet = QuestsModule[questSlot.questDifficulty]
+                                                            local questInfo = questSet and questSet[questSlot.questId]
+                                                            if questInfo and questInfo.quest.quest == questType then
+                                                                currentProgress = questSlot.progress or 0
+                                                                break
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                local remaining = questData.required - currentProgress
+                                                if remaining <= 0 then return end
+                                                
+                                                -- Count pets by tier and name
+                                                local petsByName = {}
+                                                for petId, petRawData in pairs(playerData.inventory.pet) do
+                                                    local petObject = Util.itemUtils.createItemFromData(petRawData)
+                                                    if petObject and (petRawData.am or 0) > 0 then
+                                                        local petName = petObject:getName()
+                                                        local tierNum = petObject:getTier()
+                                                        
+                                                        petsByName[petName] = petsByName[petName] or {normal = 0, golden = 0, normalIds = {}, goldenIds = {}}
+                                                        if tierNum == 1 then
+                                                            petsByName[petName].normal = petsByName[petName].normal + (petRawData.am or 0)
+                                                            table.insert(petsByName[petName].normalIds, {id = petId, count = petRawData.am or 0})
+                                                        elseif tierNum == 2 then
+                                                            petsByName[petName].golden = petsByName[petName].golden + (petRawData.am or 0)
+                                                            table.insert(petsByName[petName].goldenIds, {id = petId, count = petRawData.am or 0})
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                -- Calculate which pet has most potential toxics
+                                                local bestPet = nil
+                                                local bestScore = 0
+                                                for petName, counts in pairs(petsByName) do
+                                                    local goldenCount = counts.golden or 0
+                                                    local normalCount = counts.normal or 0
+                                                    local totalGoldens = goldenCount + math.floor(normalCount / 5)
+                                                    local toxicsCanMake = math.floor(totalGoldens / 5)
+                                                    
+                                                    
+                                                    if toxicsCanMake > bestScore then
+                                                        bestScore = toxicsCanMake
+                                                        bestPet = petName
+                                                    end
+                                                end
+                                                
+                                                
+                                                if bestPet and bestScore > 0 then
+                                                    local data = petsByName[bestPet]
+                                                    local toCraft = math.min(bestScore, remaining)
+                                                    
+                                                    
+                                                    -- Check if we need to craft normal -> golden first
+                                                    local goldensNeeded = toCraft * 5
+                                                    local goldenCount = data.golden or 0
+                                                    local normalCount = data.normal or 0
+                                                    
+                                                    
+                                                    if goldenCount < goldensNeeded then
+                                                        local goldensToMake = goldensNeeded - goldenCount
+                                                        local normalsNeeded = goldensToMake * 5
+                                                        
+                                                        
+                                                        if normalCount >= normalsNeeded then
+                                                            -- Craft normals into goldens
+                                                            for _, normalData in ipairs(data.normalIds) do
+                                                                if goldensToMake <= 0 then break end
+                                                                
+                                                                local canMakeFromThis = math.floor(normalData.count / 5)
+                                                                local toMake = math.min(canMakeFromThis, goldensToMake)
+                                                                
+                                                                if toMake > 0 then
+                                                                    PetService:craft({[1] = normalData.id}, false, toMake)
+                                                                    goldensToMake = goldensToMake - toMake
+                                                                    task.wait(1)
+                                                                end
+                                                            end
+                                                            playerData = DataController:getData()
+                                                        else
+                                                            -- Craft what we can
+                                                            local canMakeGoldens = math.floor(normalCount / 5)
+                                                            if canMakeGoldens > 0 then
+                                                                for _, normalData in ipairs(data.normalIds) do
+                                                                    if canMakeGoldens <= 0 then break end
+                                                                    
+                                                                    local canMakeFromThis = math.floor(normalData.count / 5)
+                                                                    local toMake = math.min(canMakeFromThis, canMakeGoldens)
+                                                                    
+                                                                    if toMake > 0 then
+                                                                        PetService:craft({[1] = normalData.id}, false, toMake)
+                                                                        canMakeGoldens = canMakeGoldens - toMake
+                                                                        task.wait(1)
+                                                                    end
+                                                                end
+                                                                playerData = DataController:getData()
+                                                            end
+                                                        end
+                                                    end
+                                                    
+                                                    -- Now craft golden -> toxic
+                                                    playerData = DataController:getData()
+                                                    local toxicsCrafted = 0
+                                                    
+                                                    for petId, petRawData in pairs(playerData.inventory.pet) do
+                                                        if toxicsCrafted >= toCraft then break end
+                                                        
+                                                        local petObject = Util.itemUtils.createItemFromData(petRawData)
+                                                        if petObject and petObject:getName() == bestPet and petObject:getTier() == 2 then
+                                                            local available = petRawData.am or 0
+                                                            local canCraft = math.floor(available / 5)
+                                                            local craftNow = math.min(canCraft, toCraft - toxicsCrafted)
+                                                            
+                                                            
+                                                            if craftNow > 0 then
+                                                                PetService:craft({[1] = petId}, false, craftNow)
+                                                                toxicsCrafted = toxicsCrafted + craftNow
+                                                                task.wait(1)
+                                                            end
+                                                        end
+                                                    end
+                                                    
+                                                    if toxicsCrafted == 0 then
+                                                    end
+                                                else
+                                                end
+                                            end)
+                                            task.wait(2)
+                                        end
+                                    end))
+
+                                elseif questType == "craftRing" then
+                                    table.insert(threads, task.spawn(function()
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                local RingService = Knit.GetService("RingService")
+                                                RingService:craftRing("basicRing", 1)
+                                            end)
+                                            task.wait(3)
+                                        end
+                                    end))
+
+
+                                elseif questType == "craftAnyGalaxyPets" then
+                                    table.insert(threads, task.spawn(function()
+                                        
+                                        while tick() < nextCheckTime and seasonQuestEnabled do
+                                            pcall(function()
+                                                local playerData = DataController:getData()
+                                                if not playerData or not playerData.inventory or not playerData.inventory.pet then return end
+                                                
+                                                local remaining = questData.required - questData.progress
+                                                if remaining <= 0 then return end
+                                                
+                                                -- Count pets by tier and name
+                                                local petsByName = {}
+                                                for petId, petRawData in pairs(playerData.inventory.pet) do
+                                                    local petObject = Util.itemUtils.createItemFromData(petRawData)
+                                                    if petObject and (petRawData.am or 0) > 0 then
+                                                        local petName = petObject:getName()
+                                                        local tierNum = petObject:getTier()
+                                                        
+                                                        petsByName[petName] = petsByName[petName] or {normal = 0, golden = 0, toxic = 0, normalIds = {}, goldenIds = {}, toxicIds = {}}
+                                                        if tierNum == 1 then
+                                                            petsByName[petName].normal = petsByName[petName].normal + (petRawData.am or 0)
+                                                            table.insert(petsByName[petName].normalIds, {id = petId, count = petRawData.am or 0})
+                                                        elseif tierNum == 2 then
+                                                            petsByName[petName].golden = petsByName[petName].golden + (petRawData.am or 0)
+                                                            table.insert(petsByName[petName].goldenIds, {id = petId, count = petRawData.am or 0})
+                                                        elseif tierNum == 3 then
+                                                            petsByName[petName].toxic = petsByName[petName].toxic + (petRawData.am or 0)
+                                                            table.insert(petsByName[petName].toxicIds, {id = petId, count = petRawData.am or 0})
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                -- Calculate which pet has most potential galaxies
+                                                local bestPet = nil
+                                                local bestScore = 0
+                                                for petName, counts in pairs(petsByName) do
+                                                    local toxicCount = counts.toxic or 0
+                                                    local goldenCount = counts.golden or 0
+                                                    local normalCount = counts.normal or 0
+                                                    
+                                                    local totalGoldens = goldenCount + math.floor(normalCount / 5)
+                                                    local totalToxics = toxicCount + math.floor(totalGoldens / 5)
+                                                    local galaxiesCanMake = math.floor(totalToxics / 5)
+                                                    
+                                                    
+                                                    if galaxiesCanMake > bestScore then
+                                                        bestScore = galaxiesCanMake
+                                                        bestPet = petName
+                                                    end
+                                                end
+                                                
+                                                
+                                                if bestPet and bestScore > 0 then
+                                                    local data = petsByName[bestPet]
+                                                    local toCraft = math.min(bestScore, remaining)
+                                                    
+                                                    
+                                                    -- Calculate what we need
+                                                    local toxicsNeeded = toCraft * 5
+                                                    local toxicCount = data.toxic or 0
+                                                    
+                                                    
+                                                    if toxicCount < toxicsNeeded then
+                                                        local toxicsToMake = toxicsNeeded - toxicCount
+                                                        local goldensNeeded = toxicsToMake * 5
+                                                        local goldenCount = data.golden or 0
+                                                        local normalCount = data.normal or 0
+                                                        
+                                                        
+                                                        if goldenCount < goldensNeeded then
+                                                            local goldensToMake = goldensNeeded - goldenCount
+                                                            local normalsNeeded = goldensToMake * 5
+                                                            
+                                                            
+                                                            if normalCount >= normalsNeeded then
+                                                                for _, normalData in ipairs(data.normalIds) do
+                                                                    if goldensToMake <= 0 then break end
+                                                                    
+                                                                    local canMakeFromThis = math.floor(normalData.count / 5)
+                                                                    local toMake = math.min(canMakeFromThis, goldensToMake)
+                                                                    
+                                                                    if toMake > 0 then
+                                                                        PetService:craft({[1] = normalData.id}, false, toMake)
+                                                                        goldensToMake = goldensToMake - toMake
+                                                                        task.wait(1)
+                                                                    end
+                                                                end
+                                                                playerData = DataController:getData()
+                                                            else
+                                                                local canMakeGoldens = math.floor(normalCount / 5)
+                                                                if canMakeGoldens > 0 then
+                                                                    for _, normalData in ipairs(data.normalIds) do
+                                                                        if canMakeGoldens <= 0 then break end
+                                                                        
+                                                                        local canMakeFromThis = math.floor(normalData.count / 5)
+                                                                        local toMake = math.min(canMakeFromThis, canMakeGoldens)
+                                                                        
+                                                                        if toMake > 0 then
+                                                                            PetService:craft({[1] = normalData.id}, false, toMake)
+                                                                            canMakeGoldens = canMakeGoldens - toMake
+                                                                            task.wait(1)
+                                                                        end
+                                                                    end
+                                                                    playerData = DataController:getData()
+                                                                end
+                                                            end
+                                                        end
+                                                        
+                                                        -- Craft golden -> toxic
+                                                        playerData = DataController:getData()
+                                                        local toxicsMade = 0
+                                                        
+                                                        for petId, petRawData in pairs(playerData.inventory.pet) do
+                                                            if toxicsMade >= toxicsToMake then break end
+                                                            
+                                                            local petObject = Util.itemUtils.createItemFromData(petRawData)
+                                                            if petObject and petObject:getName() == bestPet and petObject:getTier() == 2 then
+                                                                local available = petRawData.am or 0
+                                                                local canCraft = math.floor(available / 5)
+                                                                local craftNow = math.min(canCraft, toxicsToMake - toxicsMade)
+                                                                
+                                                                
+                                                                if craftNow > 0 then
+                                                                    PetService:craft({[1] = petId}, false, craftNow)
+                                                                    toxicsMade = toxicsMade + craftNow
+                                                                    task.wait(1)
+                                                                end
+                                                            end
+                                                        end
+                                                    end
+                                                    
+                                                    -- Now craft toxic -> galaxy
+                                                    playerData = DataController:getData()
+                                                    local galaxiesCrafted = 0
+                                                    
+                                                    for petId, petRawData in pairs(playerData.inventory.pet) do
+                                                        if galaxiesCrafted >= toCraft then break end
+                                                        
+                                                        local petObject = Util.itemUtils.createItemFromData(petRawData)
+                                                        if petObject and petObject:getName() == bestPet and petObject:getTier() == 3 then
+                                                            local available = petRawData.am or 0
+                                                            local canCraft = math.floor(available / 5)
+                                                            local craftNow = math.min(canCraft, toCraft - galaxiesCrafted)
+                                                            
+                                                            
+                                                            if craftNow > 0 then
+                                                                PetService:craft({[1] = petId}, false, craftNow)
+                                                                galaxiesCrafted = galaxiesCrafted + craftNow
+                                                                task.wait(1)
+                                                            end
+                                                        end
+                                                    end
+                                                    
+                                                    if galaxiesCrafted == 0 then
+                                                    end
+                                                else
+                                                end
+                                            end)
+                                            task.wait(2)
+                                        end
+                                    end))
+
+                                else
+                                    table.insert(threads, task.spawn(function()
+                                        local remainingTime = nextCheckTime - tick()
+                                        if remainingTime > 0 then
+                                            task.wait(remainingTime)
+                                        end
+                                    end))
+                                end
+                            end
+                        end)
+                        
+                        -- Wait until next check time
+                        local remainingTime = nextCheckTime - tick()
+                        if remainingTime > 0 then
+                            task.wait(remainingTime)
+                        end
+                    end
+                end)
+            end
+        end
+    })
+
+    task.spawn(function()
+        while true do
+            if seasonQuestEnabled then
+                CompleteQuests:SetValue(false)
+                task.wait(0.5)
+                CompleteQuests:SetValue(true)
+                task.wait(0.5)
+                CompleteQuests:SetValue(true)
+            end
+            task.wait(20)
+        end
+    end)
+
+    -- Settings tab
+    SaveManager:SetLibrary(Library)
+    InterfaceManager:SetLibrary(Library)
+    SaveManager:IgnoreThemeSettings()
+    SaveManager:SetIgnoreIndexes{}
+    InterfaceManager:SetFolder("FluentScriptHub")
+    SaveManager:SetFolder("FluentScriptHub/RCU-quest") -- Set once for this script
+
+    InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+    SaveManager:BuildConfigSection(Tabs.Settings)
+
+    Window:SelectTab(1)
+    SaveManager:LoadAutoloadConfig()
+end
+
+-- Initialize
+task.spawn(function()
+    if not game:IsLoaded() then game.Loaded:Wait() end
+
+    Knit = require(ReplicatedStorage.Packages.Knit)
+    Knit.OnStart():await()
+
+    -- Get Services
+    SeasonService = Knit.GetService("SeasonService")
+    EggService = Knit.GetService("EggService")
+    RebirthService = Knit.GetService("RebirthService")
+    TreeService = Knit.GetService("TreeService")
+    InventoryService = Knit.GetService("InventoryService")
+    PetService = Knit.GetService("PetService")
+    FarmService = Knit.GetService("FarmService")
+    AxeService = Knit.GetService("AxeService")
+    BuildingService = Knit.GetService("BuildingService")
+    AuraService = Knit.GetService("AuraService")
+    
+    -- Get Controllers
+    DataController = Knit.GetController("DataController")
+    
+    -- Get Modules
+    Functions = require(ReplicatedStorage.Shared.Functions)
+    seasonVariables = require(ReplicatedStorage.Shared.Variables)
+    seasonUtils = require(ReplicatedStorage.Shared.Util)
+    Util = require(ReplicatedStorage.Shared.Util)
+
+    BuildUI()
+end)

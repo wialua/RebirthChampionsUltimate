@@ -1,0 +1,704 @@
+local Library = loadstring(game:HttpGetAsync("https://github.com/ActualMasterOogway/Fluent-Renewed/releases/latest/download/Fluent.luau"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/bigbeanscripts/Pet-Warriors/refs/heads/main/test"))()
+local InterfaceManager = loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/InterfaceManager.luau"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/SenhorLDS/ProjectLDSHUB/refs/heads/main/Anti%20AFK"))()
+
+
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local Knit
+local FishingService
+
+local Window, Tabs
+
+local BuildUI
+
+Knit = require(ReplicatedStorage.Packages.Knit)
+DataController = Knit.GetController("DataController")
+Util = require(ReplicatedStorage.Shared.Util)
+FishingRodList = require(ReplicatedStorage.Shared.List.Items.Exclusive)
+FishingRodUpgrader = require(ReplicatedStorage.Shared.List.Fishing.FishingRodUpgrader)
+
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Knit = require(ReplicatedStorage.Packages.Knit)
+local Util = require(ReplicatedStorage.Shared.Util)
+local FishingRodList = require(ReplicatedStorage.Shared.List.Items.Exclusive)
+local FishingRodUpgrader = require(ReplicatedStorage.Shared.List.Fishing.FishingRodUpgrader)
+local Functions = require(ReplicatedStorage.Shared.Functions)
+local DataController = Knit.GetController("DataController")
+
+local function getRodUpgradeStatus()
+    local playerData = DataController:getData()
+    local currentIndex = nil
+    for _, itemData in pairs(playerData.inventory.exclusive) do
+        local itemObj = Util.itemUtils.createItemFromData(itemData)
+        if itemObj:getName():lower():find("fishingrod") then
+            currentIndex = itemObj:directory()[itemObj:getName()].index
+            break
+        end
+    end
+
+    if not currentIndex then
+        return "No fishing rod found in inventory."
+    end
+
+    local nextRodName = nil
+    for name, data in pairs(FishingRodList) do
+        if name:lower():find("fishingrod") and data.index == currentIndex + 1 then
+            nextRodName = name
+            break
+        end
+    end
+
+    if not nextRodName then
+        return "No next fishing rod available for upgrade."
+    end
+
+    local requiredItems = FishingRodUpgrader[nextRodName].required
+    local status = "Upgrade requirements for: " .. nextRodName .. "\n"
+    local canAffordAll = true
+    local neededFishNames = {}
+
+    for _, reqItem in ipairs(requiredItems) do
+        local ownedAmount = Util.itemUtils.getItemFromName(playerData, reqItem:getName())
+        local owned = ownedAmount and ownedAmount:getAmount() or 0
+        local needed = reqItem:getAmount()
+        local canAfford = owned >= needed
+        status = status .. string.format("%s: %d/%d %s\n", reqItem:getName(), owned, needed, canAfford and "[AFFORD]" or "[NOT ENOUGH]")
+        if not canAfford then canAffordAll = false end
+        table.insert(neededFishNames, reqItem:getName())
+    end
+
+    return status, canAffordAll, neededFishNames
+end
+
+
+BuildUI = function()
+    local AutoFishSection = Tabs.Fish:AddSection("Auto Fish")
+
+    local autoFishEnabled = false
+    local fishCatchedThread, fishRequestThread
+    local AutoEquip  -- Forward declare
+    
+    local AutoFish = AutoFishSection:Toggle("AutoFish", {
+        Title = "Auto Fish",
+        Description = "Automatically catches fish.. pretty OP and fast.",
+        Default = false,
+        Callback = function(state)
+            autoFishEnabled = state
+            
+            -- Enable AutoEquip when AutoFish is enabled
+            if state and AutoEquip then
+                AutoEquip:SetValue(true)
+            end
+            
+            if autoFishEnabled then
+                fishCatchedThread = task.spawn(function()
+                    while autoFishEnabled do
+                        pcall(function()
+                            local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                            KnitClient.GetService("FishingService").fishCatched._re:FireServer()
+                        end)
+                        task.wait(0.25)
+                    end
+                end)
+                fishRequestThread = task.spawn(function()
+                    while autoFishEnabled do
+                        pcall(function()
+                            local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                            KnitClient.GetService("FishingService").fishRequest._re:FireServer()
+                        end)
+                        task.wait(0.25)
+                    end
+                end)
+            else
+                if fishCatchedThread then task.cancel(fishCatchedThread) fishCatchedThread = nil end
+                if fishRequestThread then task.cancel(fishRequestThread) fishRequestThread = nil end
+            end
+        end
+    })
+
+    local autoSellEnabled = false
+    local autoSellThread
+
+    local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+    local FishingService = KnitClient.GetService("FishingService")
+
+    local AutoSell = AutoFishSection:Toggle("AutoSellFish", {
+        Title = "Auto Sell Fish",
+        Description = "Automatically sells all fish EXCEPT the fish needed for rod upgrades.",
+        Default = false,
+
+        Callback = function(state)
+            -- Disable previous thread cleanly
+            autoSellEnabled = state
+            if autoSellThread then
+                task.cancel(autoSellThread)
+                autoSellThread = nil
+            end
+
+            -- If turned OFF, stop here
+            if not state then return end
+
+            -- Start new loop
+            autoSellThread = task.spawn(function()
+                while autoSellEnabled do
+                    local playerData = DataController:getData()
+                    if not playerData or not playerData.inventory then
+                        task.wait(1)
+                        continue
+                    end
+
+
+                    local currentIndex = nil
+
+                    for _, itemData in pairs(playerData.inventory.exclusive or {}) do
+                        local itemObj = Util.itemUtils.createItemFromData(itemData)
+                        if itemObj and itemObj:getName():lower():find("fishingrod") then
+                            local dir = itemObj:directory()
+                            if dir and dir[itemObj:getName()] then
+                                currentIndex = dir[itemObj:getName()].index
+                            end
+                            break
+                        end
+                    end
+
+
+                    local neededFishNames = {}
+
+                    if currentIndex then
+                        for name, data in pairs(FishingRodList) do
+                            if name:lower():find("fishingrod") and data.index == currentIndex + 1 then
+                                local upgradeData = FishingRodUpgrader[name]
+                                if upgradeData and upgradeData.required then
+                                    for _, req in ipairs(upgradeData.required) do
+                                        local reqName = req.getName and req:getName() or req.name
+                                        if reqName then
+                                            table.insert(neededFishNames, reqName)
+                                        end
+                                    end
+                                end
+                                break
+                            end
+                        end
+                    end
+
+
+                    local sellTable = {}
+                    for itemId, itemData in pairs(playerData.inventory.fish or {}) do
+                        local itemObj = Util.itemUtils.createItemFromData(itemData)
+                        if itemObj then
+                            local fishName = itemObj:getName()
+                            if not table.find(neededFishNames, fishName) then
+                                sellTable[itemId] = true
+                            end
+                        end
+                    end
+
+                    if next(sellTable) then
+                        pcall(function()
+                            FishingService:sellFish(sellTable)
+                        end)
+                    end
+
+                    task.wait(3)
+                end
+            end)
+        end
+    })
+
+
+    isAutoEquipRodEnabled = false
+    AutoEquip = AutoFishSection:Toggle("AutoEquipBestRod", {
+        Title = "Auto Equip Best Rod",
+        Description = "Automatically equips the best rod you own.",
+        Default = false,
+        Callback = function(Value)
+            isAutoEquipRodEnabled = Value
+            if Value then
+                task.spawn(function()
+                    while isAutoEquipRodEnabled do
+                        pcall(function()
+                            DataController:waitForData()
+                            local playerData = DataController:getData()
+
+                            local rodInventoryId = nil
+                            for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                local itemName = itemObj:getName()
+
+                                -- Check if it's a fishing rod
+                                if itemName:lower():find("fishingrod") or itemName:lower():find("rod") then
+                                    rodInventoryId = itemId
+                                    break
+                                end
+                            end
+
+                            if not rodInventoryId then return end
+
+                            local isRodEquipped = playerData.isFishingRodEquipped
+
+                            if not isRodEquipped then
+                                -- Find and unequip currently equipped item first
+                                local currentEquippedId = nil
+                                
+                                -- Check if axe is equipped
+                                if playerData.isAxeEquipped then
+                                    for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                        local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                        local itemName = itemObj:getName()
+                                        if itemName:lower():find("axe") and not itemName:lower():find("pickaxe") then
+                                            currentEquippedId = itemId
+                                            break
+                                        end
+                                    end
+                                end
+                                
+                                -- Check if pickaxe is equipped
+                                if playerData.isPickaxeEquipped and not currentEquippedId then
+                                    for itemId, itemData in pairs(playerData.inventory.exclusive) do
+                                        local itemObj = Util.itemUtils.createItemFromData(itemData)
+                                        local itemName = itemObj:getName()
+                                        if itemName:lower():find("pickaxe") then
+                                            currentEquippedId = itemId
+                                            break
+                                        end
+                                    end
+                                end
+                                
+                                -- Unequip current item if found
+                                if currentEquippedId then
+                                    local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                                    Knit.GetService("InventoryService"):useItem(currentEquippedId, {use=1})
+                                    task.wait(1)
+                                end
+                                
+                                -- Equip the rod
+                                local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                                Knit.GetService("InventoryService"):useItem(rodInventoryId, {use=1})
+                            end
+                        end)
+
+                        for i = 1, 50 do
+                            if not isAutoEquipRodEnabled then break end
+                            task.wait(0.1)
+                        end
+                    end
+                end)
+            end
+        end
+    })
+
+
+
+    task.spawn(function()
+        while true do
+            if AutoFish.Value == false then
+                AutoEquip:SetValue(false)
+            elseif AutoFish.Value == true then
+                AutoEquip:SetValue(true)
+            end
+            task.wait(5)
+        end
+    end)
+
+    local AutoUpgradeSection = Tabs.Fish:AddSection("Auto Upgrade Rod")
+
+    local RodStatusParagraph = AutoUpgradeSection:Paragraph("RodUpgradeStatus", {
+        Title = "Rod Upgrade",
+        Content = "Loading upgrade info...",
+        TitleAlignment = "Middle",
+        ContentAlignment = Enum.TextXAlignment.Left
+    })
+
+    local function updateRodUpgradeStatus()
+        pcall(function()
+            local playerData = DataController:getData()
+            local currentIndex = nil
+            for inventoryIndex, itemData in pairs(playerData.inventory.exclusive) do
+                local itemObj = Util.itemUtils.createItemFromData(itemData)
+                if itemObj:getName():lower():find("fishingrod") then
+                    currentIndex = itemObj:directory()[itemObj:getName()].index
+                    break
+                end
+            end
+
+            if not currentIndex then
+                RodStatusParagraph:SetValue("❌ No fishing rod found in inventory!")
+                return false, {}
+            end
+
+            local nextRodIndex = currentIndex + 1
+            local nextRodName, nextRodData = nil, nil
+
+            for itemName, itemData in pairs(FishingRodList) do
+                if itemName:lower():find("fishingrod") and itemData.index == nextRodIndex then
+                    nextRodName = itemName
+                    nextRodData = itemData
+                    break
+                end
+            end
+
+            if not nextRodName then
+                RodStatusParagraph:SetValue("🎉 You have the maximum fishing rod!")
+                return false, {}
+            end
+
+            local rodRequirements = FishingRodUpgrader[nextRodName]
+            if not rodRequirements or not rodRequirements.required then
+                RodStatusParagraph:SetValue("❌ No requirements found for next rod!")
+                return false, {}
+            end
+
+            local statusLines = {}
+            table.insert(statusLines, "🎯 Next: " .. nextRodName)
+            table.insert(statusLines, "")
+            table.insert(statusLines, "📋 Materials Needed:")
+
+            local canUpgrade = true
+            local neededFishNames = {}
+
+            for i, requiredItem in ipairs(rodRequirements.required) do
+                local itemName = requiredItem:getName()
+                local requiredAmount = requiredItem:getAmount()
+
+                local currentItem = Util.itemUtils.getItemFromName(playerData, itemName)
+                local currentAmount = currentItem and currentItem:getAmount() or 0
+
+                local hasEnough = requiredAmount <= currentAmount
+                if not hasEnough then canUpgrade = false end
+
+                local status = hasEnough and "✅" or "❌"
+                local progress = string.format("%s/%s", currentAmount, requiredAmount)
+
+                table.insert(statusLines, string.format("%s %s: %s", status, itemName, progress))
+                table.insert(neededFishNames, itemName)
+            end
+
+            table.insert(statusLines, "")
+            table.insert(statusLines, "🔨 Status: " .. (canUpgrade and "Ready to upgrade!" or "Need more materials"))
+
+            RodStatusParagraph:SetValue(table.concat(statusLines, "\n"))
+            return canUpgrade, neededFishNames
+        end)
+    end
+
+    task.spawn(function()
+        while true do
+            updateRodUpgradeStatus()
+            task.wait(5)
+        end
+    end)
+
+    local autoUpgradeEnabled = false
+    AutoUpgradeSection:Toggle("AutoUpgradeRod", {
+        Title = "Auto Upgrade",
+        Description = "Automatically upgrades your fishing rod when materials are available.\n\n⚠️ If you can't afford it, Auto Fish and Auto Sell Fish will be enabled.",
+        Default = false,
+        Callback = function(enabled)
+            autoUpgradeEnabled = enabled
+            if enabled then
+                task.spawn(function()
+                    local lastUpgradedIndex = nil
+                    while autoUpgradeEnabled do
+                        local playerData = DataController:getData()
+                        local currentIndex = nil
+                        for _, itemData in pairs(playerData.inventory.exclusive) do
+                            local itemObj = Util.itemUtils.createItemFromData(itemData)
+                            if itemObj:getName():lower():find("fishingrod") then
+                                currentIndex = itemObj:directory()[itemObj:getName()].index
+                                break
+                            end
+                        end
+
+                        local nextRodName = nil
+                        for name, data in pairs(FishingRodList) do
+                            if name:lower():find("fishingrod") and data.index == currentIndex + 1 then
+                                nextRodName = name
+                                break
+                            end
+                        end
+
+                        local canUpgrade = false
+                        if nextRodName then
+                            local requiredItems = FishingRodUpgrader[nextRodName] and FishingRodUpgrader[nextRodName].required
+                            if requiredItems then
+                                canUpgrade = true
+                                for _, reqItem in ipairs(requiredItems) do
+                                    local ownedAmount = Util.itemUtils.getItemFromName(playerData, reqItem:getName())
+                                    local owned = ownedAmount and ownedAmount:getAmount() or 0
+                                    local needed = reqItem:getAmount()
+                                    if owned < needed then
+                                        canUpgrade = false
+                                    else
+                                    end
+                                end
+                            end
+                        end
+
+                        if canUpgrade and currentIndex ~= lastUpgradedIndex then
+                            lastUpgradedIndex = currentIndex
+                            pcall(function()
+                                local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                                KnitClient.GetService("FishingRodService"):upgradeFishingRod()
+                            end)
+                        elseif not canUpgrade then
+                            AutoFish:SetValue(true)
+                            AutoSell:SetValue(true)
+                        else
+                        end
+                        task.wait(3)
+                    end
+                end)
+            end
+        end
+    })
+
+    DungeonUpgrades = Tabs.Fish:AddSection("Auto Buy Upgrades")
+
+    -- Get all fishing upgrades for dropdown
+    local function getAllFishingUpgrades()
+        local options = {}
+        local upgradeMap = {}
+        
+        pcall(function()
+            local FishingUpgrades = require(game:GetService("ReplicatedStorage").Shared.List.Fishing.FishingUpgrades)
+            
+            for upgradeId, upgradeData in pairs(FishingUpgrades) do
+                -- Keep camelCase format for display
+                table.insert(options, upgradeId)
+                upgradeMap[upgradeId] = upgradeId
+            end
+        end)
+        
+        table.sort(options)
+        return options, upgradeMap
+    end
+
+    local fishingUpgradeOptions, fishingUpgradeMap = getAllFishingUpgrades()
+    local selectedFishingUpgrades = {}
+
+    -- Dropdown for selecting upgrades
+    local fishingUpgradeDropdown = DungeonUpgrades:Dropdown("SelectFishingUpgrades", {
+        Title = "Select Upgrades to Auto Buy",
+        Values = fishingUpgradeOptions,
+        Multi = true,
+        Searchable = true,
+        Default = {},
+        Callback = function(value)
+            selectedFishingUpgrades = value
+            local count = 0
+            for k, v in pairs(selectedFishingUpgrades) do
+                count = count + 1
+            end
+        end
+    })
+
+    -- Auto upgrade toggle
+    local autoFishingUpgradeEnabled = false
+    DungeonUpgrades:Toggle("AutoUpgrade", {
+        Title = "Auto Upgrade",
+        Description = "Automatically buys selected fishing upgrades when you can afford them.",
+        Default = false,
+        Callback = function(Value)
+            autoFishingUpgradeEnabled = Value
+            if Value then
+                task.spawn(function()
+                    while autoFishingUpgradeEnabled do
+                        if next(selectedFishingUpgrades) then
+                            
+                            pcall(function()
+                                local playerData = DataController:getData()
+                                if not playerData then 
+                                    return 
+                                end
+                                
+                                local FishingUpgradesModule = require(game:GetService("ReplicatedStorage").Shared.List.Fishing.FishingUpgrades)
+                                
+                                -- Get fish coins
+                                local fishCoins = 0
+                                if playerData and playerData.inventory and type(playerData.inventory.currency) == "table" then
+                                    for _, currencyData in pairs(playerData.inventory.currency) do
+                                        if currencyData.nm == "fishCoins" then
+                                            fishCoins = currencyData.am
+                                            break
+                                        end
+                                    end
+                                end
+                                
+                                local count = 0
+                                for k, v in pairs(selectedFishingUpgrades) do
+                                    count = count + 1
+                                end
+                                
+                                if count == 0 then
+                                    return
+                                end
+                                
+                                -- Check each selected upgrade
+                                for upgradeId, isSelected in pairs(selectedFishingUpgrades) do
+                                    
+                                    if isSelected and fishingUpgradeMap[upgradeId] then
+                                        local actualUpgradeId = fishingUpgradeMap[upgradeId]
+                                        
+                                        local upgradeData = FishingUpgradesModule[actualUpgradeId]
+                                        
+                                        if upgradeData then
+                                            
+                                            local currentLevel = (playerData.fishingUpgrades and playerData.fishingUpgrades[actualUpgradeId]) or 0
+                                            local nextLevel = currentLevel + 1
+
+                                            -- Check if there's a next level available
+                                            if upgradeData.upgrades and upgradeData.upgrades[nextLevel] then
+                                                local upgradeInfo = upgradeData.upgrades[nextLevel]
+                                                
+                                                -- Get the cost - it's an item object, need to get the amount
+                                                local upgradeCost = 0
+                                                if upgradeInfo.cost then
+                                                    -- The cost is a currency item object, get its amount
+                                                    if type(upgradeInfo.cost.getAmount) == "function" then
+                                                        upgradeCost = upgradeInfo.cost:getAmount()
+                                                    elseif type(upgradeInfo.cost) == "table" and upgradeInfo.cost.am then
+                                                        upgradeCost = upgradeInfo.cost.am
+                                                    elseif type(upgradeInfo.cost) == "number" then
+                                                        upgradeCost = upgradeInfo.cost
+                                                    end
+                                                end
+                                                
+                                                if type(upgradeInfo.cost) == "table" then
+                                                    for k, v in pairs(upgradeInfo.cost) do
+                                                    end
+                                                end
+                                                
+                                                local canAfford = fishCoins >= upgradeCost
+
+                                                -- Buy if can afford
+                                                if canAfford then
+                                                    
+                                                    local success, err = pcall(function()
+                                                        local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                                                        KnitClient.GetService("UpgradeService"):upgradeFishing(actualUpgradeId)
+                                                    end)
+                                                    
+                                                    if success then
+                                                    end
+                                                    
+                                                    fishCoins = fishCoins - upgradeCost
+                                                    task.wait(0.25)
+                                                    
+                                                    -- Update player data for next iteration
+                                                    playerData = DataController:getData()
+                                                    if playerData and playerData.inventory and type(playerData.inventory.currency) == "table" then
+                                                        for _, currencyData in pairs(playerData.inventory.currency) do
+                                                            if currencyData.nm == "fishCoins" then
+                                                                fishCoins = currencyData.am
+                                                                break
+                                                            end
+                                                        end
+                                                    end
+                                                else
+                                                end
+                                            else
+                                            end
+                                        else
+                                        end
+                                    else
+                                    end
+                                end
+                            end)
+                        end
+                        
+                        task.wait(3) -- Check every 3 seconds
+                    end
+                end)
+            end
+        end
+    })
+
+    local FishIndexSection = Tabs.Fish:AddSection("Fishing Index")
+
+    local autoClaimFishdexRewards = false
+
+    FishIndexSection:Toggle("ClaimFishingRewards", {
+        Title = "Claim Fishing Rewards",
+        Description = "Automatically claims available Fishing Index rewards.",
+        Default = false,
+        Callback = function(enabled)
+            autoClaimFishdexRewards = enabled
+            if enabled then
+                task.spawn(function()
+                    while autoClaimFishdexRewards do
+                        pcall(function()
+                            local playerData = DataController:getData()
+                            local FishdexRewards = require(game:GetService("ReplicatedStorage").Shared.List.Fishing.FishdexRewards)
+                            local claimed = playerData.claimedFishdexRewards or {}
+                            local fishdex = playerData.fishdex or {}
+
+                            local collectedCount = 0
+                            for _ in pairs(fishdex) do
+                                collectedCount = collectedCount + 1
+                            end
+
+                            for index, rewardData in pairs(FishdexRewards) do
+                                local alreadyClaimed = table.find(claimed, index)
+                                local enoughCollected = collectedCount >= rewardData.required
+                                if not alreadyClaimed and enoughCollected then
+                                    local KnitClient = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                                    KnitClient.GetService("FishingService"):claimFishdexdexReward(index)
+                                    task.wait(0.5)
+                                end
+                            end
+                        end)
+                        task.wait(5)
+                    end
+                end)
+            end
+        end
+    })
+
+    SaveManager:SetLibrary(Library)
+    InterfaceManager:SetLibrary(Library)
+    SaveManager:IgnoreThemeSettings()
+    SaveManager:SetIgnoreIndexes{}
+    InterfaceManager:SetFolder("FluentScriptHub")
+    SaveManager:SetFolder("FluentScriptHub/RCU-fish") -- Set once for this script
+
+    InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+    SaveManager:BuildConfigSection(Tabs.Settings)
+
+    Window:SelectTab(1)
+    SaveManager:LoadAutoloadConfig()
+end
+
+task.spawn(function()
+    if not game:IsLoaded() then game.Loaded:Wait() end
+
+    Knit = require(ReplicatedStorage.Packages.Knit)
+    Knit.OnStart():await()
+
+    DataController = Knit.GetController("DataController")
+    Util = require(ReplicatedStorage.Shared.Util)
+    FishingRodList = require(ReplicatedStorage.Shared.List.Items.Exclusive)
+    FishingRodUpgrader = require(ReplicatedStorage.Shared.List.Fishing.FishingRodUpgrader)
+
+    Window = Library:Window{
+        Title = "901",
+        SubTitle = "By Wia",
+        TabWidth = 160,
+        Size = UDim2.fromOffset(580, 460),
+        Resize = false,
+        Theme = "Darker",
+        MinimizeKey = Enum.KeyCode.LeftShift
+    }
+
+    Tabs = {
+        Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
+        Fish = Window:AddTab({ Title = "Fish", Icon = "fish" }),
+    }
+
+    BuildUI()
+end)

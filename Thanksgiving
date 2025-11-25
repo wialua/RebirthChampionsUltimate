@@ -1,0 +1,722 @@
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+
+local requestFunc = (syn and syn.request) or (http and http.request) or request
+if not requestFunc then
+    warn("Your executor does not support HTTP requests.")
+    return
+end
+
+local player = Players.LocalPlayer
+local userid = player.UserId
+local username = player.Name
+
+-- Thread Manager - Add this here
+local ThreadManager = {}
+ThreadManager.threads = {}
+
+function ThreadManager:Add(key, thread)
+    self:Stop(key)
+    self.threads[key] = thread
+    return thread
+end
+
+function ThreadManager:Stop(key)
+    if self.threads[key] then
+        pcall(function() task.cancel(self.threads[key]) end)
+        self.threads[key] = nil
+    end
+end
+
+function ThreadManager:StopAll()
+    for key, thread in pairs(self.threads) do
+        pcall(function() task.cancel(thread) end)
+    end
+    self.threads = {}
+end
+
+
+local Library = loadstring(game:HttpGetAsync("https://github.com/ActualMasterOogway/Fluent-Renewed/releases/latest/download/Fluent.luau"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/bigbeanscripts/Pet-Warriors/refs/heads/main/test"))()
+local InterfaceManager = loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/InterfaceManager.luau"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/SenhorLDS/ProjectLDSHUB/refs/heads/main/Anti%20AFK"))()
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
+local LocalPlayer = Players.LocalPlayer
+
+local Knit
+local ClickService, EggService, RebirthService, TreeService, AxeService, InventoryService,
+      PetService, RewardService, UpgradeService, SeasonService, AuraService, EventService,
+      OrbService, FarmService, BuildingService, ClanService, LumberjackService
+local DataController, EggController, TreeController, HatchingController, AuraController,
+      MapController, OrbController, ItemController, SoundController, FarmController, BuildingController
+
+local Functions, Util, Values, seasonVariables, seasonUtils, seasonTiersList
+
+local Window, Tabs, EggDropdown, HatchAmount, LuckyEgg, AutoHatch, HideAnimationToggle,
+      SelectTreesDropdown, AutoCutTreesToggle, lowercooldown, BypassStrength, AutoEquip, UpgradeAxe,
+      explorerroom, ActivateLeversSection, ClaimSection, AncientWheel, ClanWheel, AncientMerchantSection, PassSection,
+      Aura, EventSection, AutoCraftBuildings, autoCraftDropdown
+
+local selectedEgg, selectedAmount, useLuckyEggs, selectedTrees, autoBreakRunning, isAutoEquipAxeEnabled,
+      isAutoUpgradeEnabled, originalSelectedObjects, originalAutoCutState, treeToggleThread, petDisplayToId,
+      angelQuestToggle, allowedDiceDropdown, originalEggSelection, originalHatchAmount, originalTreeSelection,
+      originalAutoCutState, originalAutoHatchState, angelQuestEnabled, isAutoCollectEnabled, autoClaimThread, pickupStarsThread,
+      autoClaimAllChestsThread, originalIsInGroup, supplyDropThread, isAutoSpinEnabled, isAutoSpinEnabled1, isAutoBuyEnabled,
+      autoSteampunkToggles, isAutoCraftEnabled, originalAutoCraftSettings, autoCraftDropdown, autoCraftBuildingMap,
+      ResourceStatusParagraph, selectedDiceItems, autoRollThread, isAuraHidden, originalAuraFuncs, isAutoBreakingMeteors
+
+local BuildUI, getUnlockedRebirthOptions, GetBestRebirthOption, updateRebirthDropdown, performRebirth,
+      TerminateThread, CreateThread, formatNumber, getLuckyIdForEggName, getTreeTypes, mapWoodToTreeWorld,
+      getLumberId, getActiveTreesInGroup, updateAxeUpgradeStatus, manageTreeToggleCycle, getAllNonWoodRequirements,
+      getAllFarms, getAllFarmsWithOptions, getAllFarmsForClaim, isFarmReady, getPlayerPetOptions,
+      updatePetStatusParagraph, updateAngelQuestStatus, getAllAuraDice, getCurrentQuestType, findBestPotion,
+      getAvailableAuraDice, setupForQuestType, storeOriginalSettings, restoreOriginalSettings, getAllSmoothies,
+      getAllMagicPotItems, getAllWoods, canCraftToday, getAllMaps, getAllLumberjackItems, canAffordUpgrade,
+      isLumberjackAtWork, getAllUpgradeItems, hasActiveBoost, getUnbuiltBuildings, canAffordBuilding,
+      getPrerequisiteChain, getMissingResources, updateResourceStatus, mapWoodToTreeWorldForCraft, claimChestsInUnlockedMaps,
+      createClaimToggle, getAllAncientMerchantItems, updateDiceStatus, storeAuraFuncs, hideAuraAnims, restoreAuraAnims
+
+spawn(function()
+    while wait(30) do 
+        pcall(function() collectgarbage("collect") end)
+        gcinfo()
+    end
+end)
+
+BuildUI = function()
+
+
+    local EggSection = Tabs.Turkey:AddSection("Eggs")
+
+    local eggOptions = { "Thanksgiving", "Thanksgiving (Maze)" }
+    local selectedEgg = eggOptions[1]
+    local hatchAmounts = { ["1x"] = 1, ["3x"] = 3, ["Max"] = 99 }
+    local selectedAmount = hatchAmounts["Max"]
+    local useLuckyEggs = false
+    local autoHatchThread = nil
+
+    local EggDropdown = EggSection:Dropdown("SelectEgg", {
+        Title = "Auto Hatch",
+        Values = eggOptions,
+        Default = selectedEgg,
+        Multi = false,
+        Searchable = true,
+        Callback = function(Value)
+            selectedEgg = Value
+        end
+    })
+
+    local HatchAmount = EggSection:Dropdown("SelectHatchAmount", {
+        Title = "Hatch Amount",
+        Values = { "1x", "3x", "Max" },
+        Default = "Max",
+        Multi = false,
+        Callback = function(Value)
+            selectedAmount = hatchAmounts[Value] or 1
+        end
+    })
+
+    local LuckyEgg = EggSection:Toggle("UseLuckyEggs", {
+        Title = "Use Lucky Eggs",
+        Default = false,
+        Callback = function(enabled)
+            useLuckyEggs = enabled
+        end
+    })
+
+    local AutoHatch = EggSection:Toggle("AutoHatch", {
+        Title = "Auto Hatch",
+        Default = false,
+        Callback = function(Value)
+            if autoHatchThread then
+                task.cancel(autoHatchThread)
+                autoHatchThread = nil
+            end
+            if Value then
+                autoHatchThread = task.spawn(function()
+                    while Value do
+                        if not HatchingController._isHatching then
+                            if selectedEgg == "Thanksgiving (Maze)" then
+                                EggService.openEgg._re:FireServer("Thanksgiving", selectedAmount, { isMazeEgg = true })
+                                task.wait(0.2)
+                            else
+                                local args = { "Thanksgiving", selectedAmount }
+                                if useLuckyEggs then
+                                    local anyAvailableLuckyId, _ = next(EggController._luckyEggs or {})
+                                    if anyAvailableLuckyId then
+                                        table.insert(args, { luckyEggId = anyAvailableLuckyId })
+                                    end
+                                end
+                                EggService.openEgg._re:FireServer(unpack(args))
+                            end
+                            task.wait(0.2) 
+                        end
+                        task.wait(0.05)
+                    end
+                end)
+            end
+        end
+    })
+    
+
+    local Mobs = Tabs.Turkey:AddSection("Turkey Mobs")
+
+    local Note = Mobs:Paragraph("Note", {
+        Title = "WARNING",
+        Content = "\nKilling turkeys and hatching eggs at the same time can lead to bans.",
+    })
+
+
+       
+    local isAutoHitTurkeyMobsEnabled = false
+    local autoHitTurkeyMobsThread
+
+    local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit)
+    local ThanksgivingService = Knit.GetService("ThanksgivingService")
+    local DataController = Knit.GetController("DataController")
+    local CollectionService = game:GetService("CollectionService")
+    local TurkeyList = require(game:GetService("ReplicatedStorage").Shared.List.Thanksgiving.Turkeys)
+
+    local AutoHit = Mobs:Toggle("AutoHitTurkeyMobs", {
+        Title = "Auto Hit Turkey Mobs",
+        Default = false,
+        Callback = function(Value)
+            isAutoHitTurkeyMobsEnabled = Value
+            if autoHitTurkeyMobsThread then
+                task.cancel(autoHitTurkeyMobsThread)
+                autoHitTurkeyMobsThread = nil
+            end
+            if Value then
+                autoHitTurkeyMobsThread = task.spawn(function()
+                    while isAutoHitTurkeyMobsEnabled do
+                        pcall(function()
+                            DataController:waitForData()
+                            local playerData = DataController:getData()
+                            local mobs = CollectionService:GetTagged("mob")
+                            local lowestHealthMobId = nil
+                            local lowestHealth = math.huge
+                            if playerData and playerData.turkeys then
+                                for _, mob in ipairs(mobs) do
+                                    local mobId = mob:GetAttribute("mobId")
+                                    local mobData = playerData.turkeys[mobId]
+                                    if mobData then
+                                        local mobInfo = TurkeyList[mobData.name]
+                                        local maxHp = mobInfo and mobInfo.hp or 1
+                                        local currentHp = maxHp - (mobData.damage or 0)
+                                        if currentHp < lowestHealth then
+                                            lowestHealth = currentHp
+                                            lowestHealthMobId = mobId
+                                        end
+                                    end
+                                end
+                            end
+                            if lowestHealthMobId then
+                                ThanksgivingService.damage._re:FireServer(lowestHealthMobId)
+                            end
+                        end)
+                        task.wait(0.2)
+                    end
+                end)
+            end
+        end
+    })
+
+
+    local isAutoEquipThanksgivingSwordEnabled = false
+    local autoEquipThanksgivingSwordThread
+
+    local AutoEquip = Mobs:Toggle("AutoEquipThanksgivingSword", {
+        Title = "Auto Equip Thanksgiving Sword",
+        Default = false,
+        Callback = function(Value)
+            isAutoEquipThanksgivingSwordEnabled = Value
+            if autoEquipThanksgivingSwordThread then
+                task.cancel(autoEquipThanksgivingSwordThread)
+                autoEquipThanksgivingSwordThread = nil
+            end
+            if Value then
+                autoEquipThanksgivingSwordThread = task.spawn(function()
+                    while isAutoEquipThanksgivingSwordEnabled do
+                        pcall(function()
+                            DataController:waitForData()
+                            local playerData = DataController:getData()
+
+                            -- Search all inventory tables for the sword
+                            local swordId = nil
+                            local swordLocation = nil
+                            local inventoryTables = {
+                                playerData.inventory and playerData.inventory.thanksgivingEvent,
+                                playerData.inventory and playerData.inventory.exclusive,
+                                playerData.inventory and playerData.inventory.activeEvent,
+                                playerData.inventory and playerData.inventory.tool,
+                                playerData.inventory and playerData.inventory.pet,
+                                playerData.inventory and playerData.inventory.box,
+                                playerData.inventory and playerData.inventory.mapItem,
+                            }
+                            for _, invTable in ipairs(inventoryTables) do
+                                if invTable then
+                                    for itemId, itemData in pairs(invTable) do
+                                        if itemData.nm and tostring(itemData.nm):lower():find("thanksgivingsword") then
+                                            swordId = itemId
+                                            swordLocation = invTable
+                                            break
+                                        end
+                                    end
+                                end
+                                if swordId then break end
+                            end
+
+                            local isEquipped = playerData.isThanksgivingWeaponEquipped
+
+                            local currentEquippedId = nil
+                            local equippedTypes = {
+                                {flag = playerData.isAxeEquipped, keyword = "axe"},
+                                {flag = playerData.isPickaxeEquipped, keyword = "pickaxe"},
+                                {flag = playerData.isFishingRodEquipped, keyword = "rod"},
+                                {flag = playerData.isThanksgivingWeaponEquipped, keyword = "thanksgivingsword"},
+                            }
+                            for _, equip in ipairs(equippedTypes) do
+                                if equip.flag then
+                                    for _, invTable in ipairs(inventoryTables) do
+                                        if invTable then
+                                            for itemId, itemData in pairs(invTable) do
+                                                if itemData.nm and tostring(itemData.nm):lower():find(equip.keyword) and itemId ~= swordId then
+                                                    currentEquippedId = itemId
+                                                    break
+                                                end
+                                            end
+                                        end
+                                        if currentEquippedId then break end
+                                    end
+                                end
+                                if currentEquippedId then break end
+                            end
+                            if currentEquippedId then
+                                local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                                Knit.GetService("InventoryService"):useItem(currentEquippedId, {use=1})
+                                task.wait(1)
+                            end
+                            if not isEquipped then
+                                local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                                Knit.GetService("InventoryService"):useItem(swordId, {use=1})
+                            end
+                        end)
+
+                        for i = 1, 50 do
+                            if not isAutoEquipThanksgivingSwordEnabled then break end
+                            task.wait(0.1)
+                        end
+                    end
+                end)
+            end
+        end
+    })
+
+    task.spawn(function()
+        while true do
+            if AutoHit.Value == false then
+                AutoEquip:SetValue(false)
+            elseif AutoHit.Value == true then
+                AutoEquip:SetValue(true)
+            end
+            task.wait(5)
+        end
+    end)
+
+    local ExtraSection = Tabs.Turkey:AddSection("Extra")
+
+
+    local isAutoTurkeyTeleportEnabled = false
+    local autoTurkeyTeleportThread
+
+    task.spawn(function()
+        local Teleport = ExtraSection:Toggle("AutoTurkeyTeleport", {
+            Title = "Auto Teleport to Turkey Event",
+            Default = false,
+            Callback = function(Value)
+                isAutoTurkeyTeleportEnabled = Value
+                if autoTurkeyTeleportThread then
+                    task.cancel(autoTurkeyTeleportThread)
+                    autoTurkeyTeleportThread = nil
+                end
+                if Value then
+                    autoTurkeyTeleportThread = task.spawn(function()
+                        pcall(function()
+                            local MapController = require(game:GetService("Players").LocalPlayer.PlayerScripts.Client.Controllers:FindFirstChild("MapController"))
+                            local TeleportFrame = require(game:GetService("StarterPlayer").StarterPlayerScripts.Client.Components.UI.Frames:FindFirstChild("TeleportFrame"))
+                            local TurkeyCFrame = require(game:GetService("ReplicatedStorage").Shared.List.Maps)[0].cframe
+                            while isAutoTurkeyTeleportEnabled do
+                                pcall(function()
+                                    local currentZoneId = MapController:getCurrentMap(true)
+                                    if currentZoneId ~= 0 then
+                                        TeleportFrame:teleportToPosition(0, TurkeyCFrame)
+                                    end
+                                end)
+                                task.wait(5)
+                            end
+                        end)
+                    end)
+                end
+            end
+        })
+end)
+
+    
+    task.spawn(function()
+        while true do
+            if Teleport.Value then
+                Teleport:SetValue(false)
+                task.wait(0.2)
+                Teleport:SetValue(true)
+                task.wait(0.2)
+                Teleport:SetValue(true)
+            end
+            task.wait(5)
+        end
+    end)
+
+    local isAutoSpinWheelEnabled = false
+    local autoSpinWheelThread
+
+    ExtraSection:Toggle("AutoSpinWheel", {
+        Title = "Auto Spin Thanksgiving Wheel",
+        Default = false,
+        Callback = function(Value)
+            isAutoSpinWheelEnabled = Value
+            if autoSpinWheelThread then
+                task.cancel(autoSpinWheelThread)
+                autoSpinWheelThread = nil
+            end
+            if Value then
+                autoSpinWheelThread = task.spawn(function()
+                    local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit)
+                    local ThanksgivingService = Knit.GetService("ThanksgivingService")
+                    while isAutoSpinWheelEnabled do
+                        pcall(function()
+                            ThanksgivingService:thanksgivingWheelSpin()
+                            task.wait(1)
+                            ThanksgivingService:thanksgivingWheelSpin()
+                        end)
+                        task.wait(10)
+                    end
+                end)
+            end
+        end
+    })
+
+    local isAutoCookingMachineEnabled = false
+    local autoCookingMachineThread
+
+    ExtraSection:Toggle("AutoCookingMachine", {
+        Title = "Auto Cooking Machine",
+        Default = false,
+        Callback = function(Value)
+            isAutoCookingMachineEnabled = Value
+            if autoCookingMachineThread then
+                task.cancel(autoCookingMachineThread)
+                autoCookingMachineThread = nil
+            end
+            if Value then
+                autoCookingMachineThread = task.spawn(function()
+                    local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit)
+                    local ThanksgivingService = Knit.GetService("ThanksgivingService")
+                    local DataController = Knit.GetController("DataController")
+                    local CookingMachineList = require(game:GetService("ReplicatedStorage").Shared.List.Thanksgiving.CookingMachine)
+                    while isAutoCookingMachineEnabled do
+                        local canCraft = false
+                        local playerData = nil
+                        pcall(function()
+                            DataController:waitForData()
+                            playerData = DataController:getData()
+                            canCraft = true
+                            for _, ingredientInfo in pairs(CookingMachineList.required) do
+                                local itemName = ingredientInfo.item.nm
+                                local requiredAmount = ingredientInfo.item.am
+                                local ownedAmount = 0
+                                local inventoryTables = {
+                                    playerData.inventory and playerData.inventory.thanksgivingEvent,
+                                }
+                                for _, invTable in ipairs(inventoryTables) do
+                                    if invTable then
+                                        for _, itemData in pairs(invTable) do
+                                            if itemData.nm == itemName then
+                                                ownedAmount = itemData.am or 0
+                                                break
+                                            end
+                                        end
+                                    end
+                                    if ownedAmount > 0 then break end
+                                end
+                                if ownedAmount < requiredAmount then
+                                    canCraft = false
+                                    break
+                                end
+                            end
+                        end)
+                        if canCraft then
+                            while canCraft and isAutoCookingMachineEnabled do
+                                pcall(function()
+                                    ThanksgivingService:cookingMachine()
+                                end)
+                                task.wait(1)
+                                canCraft = true
+                                pcall(function()
+                                    DataController:waitForData()
+                                    playerData = DataController:getData()
+                                    for _, ingredientInfo in pairs(CookingMachineList.required) do
+                                        local itemName = ingredientInfo.item.nm
+                                        local requiredAmount = ingredientInfo.item.am
+                                        local ownedAmount = 0
+                                        local inventoryTables = {
+                                            playerData.inventory and playerData.inventory.thanksgivingEvent,
+                                        }
+                                        for _, invTable in ipairs(inventoryTables) do
+                                            if invTable then
+                                                for _, itemData in pairs(invTable) do
+                                                    if itemData.nm == itemName then
+                                                        ownedAmount = itemData.am or 0
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                            if ownedAmount > 0 then break end
+                                        end
+                                        if ownedAmount < requiredAmount then
+                                            canCraft = false
+                                            break
+                                        end
+                                    end
+                                end)
+                            end
+                            task.wait(5)
+                        else
+                            task.wait(5)
+                        end
+                    end
+                end)
+            end
+        end
+    })
+
+    local BoxesSection = Tabs.Turkey:AddSection("Thanksgiving Items")
+
+    local ThanksgivingEvent = require(game:GetService("ReplicatedStorage").Shared.List.Items.ThanksgivingEvent)
+    local boxNames = {}
+    local boxNameToId = {}
+    local idToBoxName = {}
+    local selectedBoxes = {}
+
+    for key, value in pairs(ThanksgivingEvent) do
+        if value.itemType == "box" and value.name then
+            table.insert(boxNames, value.name)
+            boxNameToId[value.name] = key
+            idToBoxName[key] = value.name
+        end
+    end
+
+    for key, value in pairs(ThanksgivingEvent) do
+        if key == "turkeyEgg" and value.name then
+            table.insert(boxNames, value.name)
+            boxNameToId[value.name] = key
+            idToBoxName[key] = value.name
+        end
+    end
+
+    local BoxDropdown = BoxesSection:Dropdown("SelectBox", {
+        Title = "Select Items",
+        Values = boxNames,
+        Default = {},
+        Multi = true,
+        Searchable = true,
+        Callback = function(selected)
+            selectedBoxes = {}
+            for displayName, isSelected in pairs(selected) do
+                if isSelected then
+                    local id = boxNameToId[displayName]
+                    if id then
+                        selectedBoxes[id] = true 
+                    end
+                end
+            end
+        end
+    })
+
+    BoxesSection:Button({
+        Title = "Select All Items",
+        Callback = function()
+            local allSelected = {}
+            for _, name in ipairs(boxNames) do
+                local id = boxNameToId[name]
+                if id then
+                    allSelected[id] = true
+                end
+            end
+            -- Set dropdown values using display names
+            local allDisplayNames = {}
+            for _, name in ipairs(boxNames) do
+                allDisplayNames[name] = true
+            end
+            BoxDropdown:SetValue(allDisplayNames)
+            selectedBoxes = allSelected
+            for id, _ in pairs(selectedBoxes) do
+            end
+        end
+    })
+
+    BoxesSection:Toggle("AutoUseSelectedBoxes", {
+        Title = "Auto Use (All)",
+        Default = false,
+        Callback = function(Value)
+            AutoUseBox = Value
+            AutoUseSelectedBoxesEnabled = Value
+
+            -- Stop previous thread if it exists
+            if AutoUseSelectedBoxesThread and coroutine.status(AutoUseSelectedBoxesThread) == "running" then
+                AutoUseSelectedBoxesEnabled = false
+                task.cancel(AutoUseSelectedBoxesThread)
+                AutoUseSelectedBoxesThread = nil
+                task.wait(0.1)
+            end
+
+            if Value then
+                local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit.KnitClient)
+                local InventoryService = Knit.GetService("InventoryService")
+
+                AutoUseSelectedBoxesEnabled = true
+                AutoUseSelectedBoxesThread = task.spawn(function()
+                    while AutoUseSelectedBoxesEnabled do
+                        print("[DEBUG] Starting new check cycle")
+                        DataController:waitForData()
+                        local playerData = DataController:getData()
+                        
+                        if playerData and playerData.inventory and playerData.inventory.thanksgivingEvent then
+                            print("[DEBUG] Player data found")
+                            local inventory = playerData.inventory.thanksgivingEvent
+                            local toOpen = {}
+                            local hasBoxes = false
+                            
+                            for boxId, isSelected in pairs(selectedBoxes) do
+                                if isSelected then
+                                    print("[DEBUG] Checking selected box:", boxId)
+                                    for itemId, itemData in pairs(inventory) do
+                                        if itemData.nm == boxId or itemId == boxId then
+                                            local owned = itemData.am or 1  -- Default to 1 if am isn't found
+                                            print("[DEBUG] Found box:", boxId, "ItemID:", itemId, "Amount:", owned)
+                                            if owned > 0 then
+                                                table.insert(toOpen, {id = itemId, amount = owned})
+                                                hasBoxes = true
+                                            end
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                            
+                            print("[DEBUG] Boxes to open:", #toOpen, "Has boxes:", hasBoxes)
+                            
+                            -- Open each selected box, one at a time, with 0.5s delay between
+                            for i, boxData in ipairs(toOpen) do
+                                print("[DEBUG] Opening box", i, "of", #toOpen, "ID:", boxData.id, "Amount:", boxData.amount)
+                                pcall(function()
+                                    InventoryService:useItem(boxData.id, {use = boxData.amount})
+                                end)
+                                task.wait(0.5)
+                            end
+                            
+                            -- If no boxes were found, wait 3 seconds before checking again
+                            if not hasBoxes then
+                                print("[DEBUG] No boxes found, waiting 3 seconds")
+                                task.wait(3)
+                            else
+                                print("[DEBUG] Boxes were opened, checking again immediately")
+                            end
+                        else
+                            print("[DEBUG] No player data found, waiting 3 seconds")
+                            task.wait(3)
+                        end
+                    end
+                    print("[DEBUG] Loop ended - AutoUseSelectedBoxesEnabled:", AutoUseSelectedBoxesEnabled)
+                end)
+            end
+        end
+    })
+
+    SaveManager:SetLibrary(Library)
+    InterfaceManager:SetLibrary(Library)
+    SaveManager:IgnoreThemeSettings()
+    SaveManager:SetIgnoreIndexes{}
+    InterfaceManager:SetFolder("FluentScriptHub")
+    SaveManager:SetFolder("FluentScriptHub/RCU-thanksgiving") -- Set once for this script
+
+    InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+    SaveManager:BuildConfigSection(Tabs.Settings)
+
+    Window:SelectTab(1)
+    SaveManager:LoadAutoloadConfig()
+end
+
+task.spawn(function()
+    if not game:IsLoaded() then game.Loaded:Wait() end
+
+    Knit = require(ReplicatedStorage.Packages.Knit)
+    Knit.OnStart():await()
+
+    ClickService = Knit.GetService("ClickService")
+    EggService = Knit.GetService("EggService")
+    RebirthService = Knit.GetService("RebirthService")
+    TreeService = Knit.GetService("TreeService")
+    AxeService = Knit.GetService("AxeService")
+    InventoryService = Knit.GetService("InventoryService")
+    PetService = Knit.GetService("PetService")
+    RewardService = Knit.GetService("RewardService")
+    ClanService = Knit.GetService("ClanService")
+    UpgradeService = Knit.GetService("UpgradeService")
+    SeasonService = Knit.GetService("SeasonService")
+    FarmService = Knit.GetService("FarmService")
+    AuraService = Knit.GetService("AuraService")
+    EventService = Knit.GetService("EventService")
+    OrbService = Knit.GetService("OrbService")
+    BuildingService = Knit.GetService("BuildingService")
+    LumberjackService = Knit.GetService("LumberjackService")
+    DungeonService = Knit.GetService("DungeonService")
+    
+    DataController = Knit.GetController("DataController")
+    EggController = Knit.GetController("EggController")
+    TreeController = Knit.GetController("TreeController")
+    AuraController = Knit.GetController("AuraController")
+    MapController = Knit.GetController("MapController")
+    OrbController = Knit.GetController("OrbController")
+    ItemController = Knit.GetController("ItemController")
+    SoundController = Knit.GetController("SoundController")
+    FarmController = Knit.GetController("FarmController")
+    BuildingController = Knit.GetController("BuildingController")
+    HatchingController = require(LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Client"):WaitForChild("Controllers"):WaitForChild("HatchingController"))
+    
+    Functions = require(ReplicatedStorage.Shared.Functions)
+    seasonVariables = require(ReplicatedStorage.Shared.Variables)
+    seasonUtils = require(ReplicatedStorage.Shared.Util)
+    seasonTiersList = require(ReplicatedStorage.Shared.List[("Season%*"):format(seasonVariables.season)].Tiers)
+    Util = require(ReplicatedStorage.Shared.Util)
+    Values = require(ReplicatedStorage.Shared.Values)   
+
+    Window = Library:Window{
+        Title = "Thanksgiving Event",
+        SubTitle = "By Wia",
+        TabWidth = 160,
+        Size =  UDim2.fromOffset(580, 460),
+        Resize = false,
+        Theme = "Darker",
+        MinimizeKey = Enum.KeyCode.LeftShift
+    }
+
+    Tabs = {
+        Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
+        Turkey = Window:AddTab({ Title = "Thanksgiving Event", Icon = "phosphor-acorn" }),
+    }
+
+    BuildUI()
+end)
